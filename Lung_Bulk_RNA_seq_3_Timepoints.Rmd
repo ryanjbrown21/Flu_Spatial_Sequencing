@@ -1,0 +1,395 @@
+---
+title: "Lung bulk RNA-seq 3 timepoints"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Library}
+library(tidyverse)
+library(DESeq2)
+library(tximport)
+library(biomaRt)
+library(ggplot2)
+library(ggrepel)
+library(clusterProfiler)
+library(pheatmap)
+library(genefilter)
+library(org.Mm.eg.db)
+library(gplots)
+library(EnhancedVolcano)
+library(enrichplot)
+library(ReactomePA)
+library(readxl)
+library(xlsx)
+
+source("~/Documents/MCW/3_PhD/Bioinformatics_Collaborations/Functions_themes.R")
+```
+
+```{r Make sample coldata}
+coldata <- data.frame(
+  sample_name = c("D0_Lung_Young_1", "D0_Lung_Young_2", "D0_Lung_Aged_1", "D0_Lung_Aged_2",
+                  "D3_Lung_Young_1", "D3_Lung_Young_2", "D3_Lung_Young_3", "D3_Lung_Aged_1", "D3_Lung_Aged_2", "D3_Lung_Aged_3",
+                  "D9_Lung_Young_1", "D9_Lung_Young_2", "D9_Lung_Aged_1", "D9_Lung_Aged_2", "D9_Lung_Aged_3"),
+  treatment = c(
+    rep("Day 0 Young", 2), rep("Day 0 Aged", 2),
+    rep("Day 3 Young", 3), rep("Day 3 Aged", 3),
+    rep("Day 9 Young", 2), rep("Day 9 Aged", 3)))
+
+rownames(coldata) <- coldata$sample_name
+coldata$treatment <- factor(coldata$treatment, levels = c("Day 0 Young", "Day 0 Aged", "Day 3 Young", "Day 3 Aged", "Day 9 Young", "Day 9 Aged"))
+```
+
+```{r Load Ensembl and Salmon data}
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "mmusculus_gene_ensembl")
+ttg <- getBM(attributes = c("ensembl_transcript_id", "transcript_version", "ensembl_gene_id", 
+                            "external_gene_name", "description", "transcript_biotype"),
+             mart = mart)
+tx2gene <- ttg[,c(1,4)]
+rm(mart, ttg)
+
+files <- c("../Analysis/quants.nosync/D0_Lung/Lung_D0_Y1_S1/quant.sf",
+           "../Analysis/quants.nosync/D0_Lung/Lung_D0_Y2_S2/quant.sf",
+           "../Analysis/quants.nosync/D0_Lung/Lung_D0_O1_S3/quant.sf",
+           "../Analysis/quants.nosync/D0_Lung/Lung_D0_O2_S4/quant.sf",
+           "../../MYK067_D3_Bulk_RNA_seq/Analysis/quants.nosync/D3_Lung/Lung_Y1_S7/quant.sf",
+           "../../MYK067_D3_Bulk_RNA_seq/Analysis/quants.nosync/D3_Lung/Lung_Y2_S8/quant.sf",
+           "../../MYK067_D3_Bulk_RNA_seq/Analysis/quants.nosync/D3_Lung/Lung_Y3_S9/quant.sf",
+           "../../MYK067_D3_Bulk_RNA_seq/Analysis/quants.nosync/D3_Lung/Lung_O1_S10/quant.sf",
+           "../../MYK067_D3_Bulk_RNA_seq/Analysis/quants.nosync/D3_Lung/Lung_O2_S11/quant.sf",
+           "../../MYK067_D3_Bulk_RNA_seq/Analysis/quants.nosync/D3_Lung/Lung_O3_S12/quant.sf",
+           "../../MYK051_Lung_bulk_RNA_seq/Analysis/RCC_files/MYK/quants/MYK_1_S1/quant.sf", # Y1
+           "../../MYK051_Lung_bulk_RNA_seq/Analysis/RCC_files/MYK/quants/MYK_2_S2/quant.sf", # Y2
+           "../../MYK051_Lung_bulk_RNA_seq/Analysis/RCC_files/MYK/quants/MYK_3_S3/quant.sf", # O1
+           "../../MYK051_Lung_bulk_RNA_seq/Analysis/RCC_files/MYK/quants/MYK_4_S4/quant.sf", # O2
+           "../../MYK051_Lung_bulk_RNA_seq/Analysis/RCC_files/MYK/quants/MYK_6_S5/quant.sf") # O3
+names(files) <- coldata$sample_name
+
+files
+
+txi <- tximport(files = files, type = "salmon", tx2gene = tx2gene,
+                txIn = TRUE, txOut = FALSE, ignoreTxVersion = TRUE)
+dds <- DESeqDataSetFromTximport(txi, colData = coldata, ~treatment)
+dds <- dds[rowSums(counts(dds)) > 1, ]
+# View(as.data.frame(assay(dds)))
+```
+
+```{r PCA plot}
+rld <- DESeq2::rlog(dds, blind = FALSE)
+
+plotPCA(rld, intgroup = c("treatment")) + 
+  theme_minimal() +
+  scale_color_manual(name = "",
+                     # values = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20"))
+                     # values = c("gray70", "gray20", "lightskyblue", "dodgerblue3", "indianred2", "red4"))
+                     # values = c("gray70", "gray20", "lightskyblue", "royalblue3", "darksalmon", "red4"))
+                     values = c("gray70", "gray20", "lightskyblue", "royalblue3", "orange", "orangered3"))
+# ggsave("Figures_Lung_3_Timepoints/01_PCA_plot.pdf")
+```
+
+```{r Heatmap - variable genes}
+# top_var_genes <- order(rowVars(assay(rld)), decreasing = TRUE)[1:30]
+top_var_genes <- order(rowVars(assay(rld)), decreasing = TRUE)[1:50]
+# top_var_genes <- order(rowVars(assay(rld)), decreasing = TRUE)[1:75]
+
+my_treatment <- data.frame(coldata$treatment)
+colnames(my_treatment) <- c("treatment")
+rownames(my_treatment) <- coldata$sample_name
+
+# heatmap_colors <- c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")
+# heatmap_colors <- c("gray70", "gray20", "lightskyblue", "dodgerblue3", "indianred2", "red4")
+heatmap_colors <- c("gray70", "gray20", "lightskyblue", "royalblue3", "orange", "orangered3")
+names(heatmap_colors) <- unique(my_treatment$treatment)
+heatmap_colors <- list(treatment = heatmap_colors)
+
+pheatmap(assay(rld[top_var_genes, ]), cluster_cols = F, cluster_rows = TRUE, 
+         annotation_colors = heatmap_colors, show_colnames = F,
+         clustering_method = "ward.D2", scale = "row", fontsize_row = 8,
+         treeheight_row = 0, treeheight_col = 0, ### To remove dendrograms
+         fontsize_col = 8, cellwidth = 8, cellheight = 8, 
+         labels_col = coldata$sample_name,
+         annotation_col = my_treatment, filename = "Figures_Lung_3_Timepoints/02_Heatmap_Variable_genes_50.pdf")
+```
+
+```{r Heatmap - specific genes}
+# specific_gene <- c("Cd8a", "Cd4", "Cd19", "Il6", "Tnf", "Ifng", "Il7r", "Tcf7")
+specific_gene <- c(
+  "Ptprc", "Cd44", "Gzmb", "Prf1", "Cd28", "Icos", "Cd80", "Cd86", # T cell activation and costim
+  "Cd19", "Cr2", "Cd79a", "Cd81", # B cell markers
+  "Cd74", "H2-D1", "H2-K1", "H2-Ab1", # Antigen presentation - highly variable, may want to remove
+  "Il6", "Ifng", "Tnf", # Inflammatory cytokines
+  "Il10", "Tgfb1", # Anti-inflammatory cytokines
+  "Ly6c2", "Ly6g", "Itgam", "Itgb2", "Cd63", "Cxcr2", # Neutrophil activation/migration markers
+  "Cxcl2", "Cxcl12", # Chemokines
+  "Adgre1", "Cd14", "Fcgr1", "Cx3cr1", # Macrophage markers
+  "Chil1", "Chil4", "Siglecf", "Ace2", # Alveolar macrophage markers
+  "Vwf", "Selp", "Cxcl1", "Cxcl2", "Cxcl5", # Endothelial markers (Cxcl1/2/5 in WP bodies, neutrophil attractants)
+  "F3", "F13a1", "F10", "F5", # Clotting factors
+  "Gdf15", "Ereg", "Egfr", "Pparg") # Other
+
+specific_gene <- assay(rld[specific_gene, ])
+
+pheatmap(specific_gene, cluster_cols = F, cluster_rows = F,
+         annotation_colors = heatmap_colors, show_colnames = F, ### Added this line
+         treeheight_row = 0, treeheight_col = 0, ### To remove dendrograms
+         clustering_method = "ward.D2", scale = "row", fontsize_row = 8, 
+         fontsize_col = 8, cellwidth = 8, cellheight = 8, 
+         labels_col = coldata$cell_name,
+         gaps_col = c(2, 4, 7, 10, 12),
+         # gaps_col = c(4, 10),
+         annotation_col = my_treatment, filename = "Figures_Lung_3_Timepoints/02_Heatmap_Specific_genes.pdf")
+```
+
+```{r Gdf15}
+data.frame(Gdf15 = as.numeric(assay(rld["Gdf15", ])),
+           Sample = coldata$treatment) %>% 
+  ggplot(aes(x = Sample, y = Gdf15)) +
+  geom_point(aes(color = Sample)) +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y.., color = Sample),
+               width = 0.75, size = 1, linetype = "solid") +
+  theme_minimal() +
+  scale_color_manual(values = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) +
+  theme(legend.position = "none",
+        panel.grid.major.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text = element_text(size = 10)) +
+  ylim(0, 5.5)
+```
+
+```{r Ereg}
+# Ereg - Upregulated in D3 Young AMs; EGFR ligand, may promote contraleteral lung tissue growth after pneumonectomy (10.1002/jcp.24009), suggesting a wound-healing like interaction between AMs and stromal cells
+
+data.frame(Ereg = as.numeric(assay(rld["Ereg", ])),
+           Sample = coldata$treatment) %>% 
+  ggplot(aes(x = Sample, y = Ereg)) +
+  geom_point(aes(color = Sample)) +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y.., color = Sample),
+               width = 0.75, size = 1, linetype = "solid") +
+  theme_minimal() +
+  scale_color_manual(values = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) +
+  theme(legend.position = "none",
+        panel.grid.major.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text = element_text(size = 10)) +
+  ylim(0, 5.5) +
+  stat_compare_means(comparisons = list(
+    c("Day 0 Young", "Day 0 Aged"),
+    c("Day 3 Young", "Day 3 Aged"),
+    c("Day 9 Young", "Day 9 Aged")))
+```
+
+```{r CCL chemokines}
+# CD8 T cells predicted to have increased CCL chemokine signaling on Day 9 by CellChat
+assay(rld["Ccl3", ])
+assay(rld["Ccl4", ])
+assay(rld["Ccl5", ])
+assay(rld["Ccl8", ])
+```
+
+```{r GSEA setup}
+dds <- DESeq(dds)
+plotDispEsts(dds)
+
+# Differential Expression 
+# res <- results(dds, contrast = c("treatment", "Day 0 Aged", "Day 0 Young"))
+# write.csv(as.data.frame(res), "GSEA_files/Lung_D0_DEGs.csv")
+# res_shrink <- lfcShrink(dds, contrast = c("treatment", "Day 0 Aged", "Day 0 Young"), type = "normal")
+# 
+# res <- results(dds, contrast = c("treatment", "Day 3 Aged", "Day 3 Young"))
+# write.csv(as.data.frame(res), "GSEA_files/Lung_D3_DEGs.csv")
+# res_shrink <- lfcShrink(dds, contrast = c("treatment", "Day 3 Aged", "Day 3 Young"), type = "normal")
+
+res <- results(dds, contrast = c("treatment", "Day 9 Aged", "Day 9 Young"))
+# write.csv(as.data.frame(res), "GSEA_files/Lung_D9_DEGs.csv")
+res_shrink <- lfcShrink(dds, contrast = c("treatment", "Day 9 Aged", "Day 9 Young"), type = "normal")
+
+View(as.data.frame(res))
+res[grep("Ccl[3|4|5|8]", rownames(res)), ]
+# Day 9 CD8 T cells have stronger Ccl3/4/5/8-Ccr5 signaling by CellChat in Aged
+# scRNA-seq shows Aged CD8 T cells have higher Ccr5; are there also changes in Ccl expression throughout the lung?
+# Doesn't look like it, suggests that this signaling is CD8 T cell-intrinsic
+# However, D9 Aged lung has significantly higher Ccl7 (binds Ccr2 on monocytes) - May tie in to monocyte-AM recruitment/transition
+
+plotMA(res, ylim = c(-10,10))
+plotMA(res_shrink, ylim = c(-10,10))
+
+lfc_list <- res_shrink$log2FoldChange
+names(lfc_list) <- rownames(res_shrink)
+lfc_list <- lfc_list[order(lfc_list, decreasing = TRUE)]
+names(lfc_list) <- mapIds(org.Mm.eg.db, keys = names(lfc_list), keytype = "SYMBOL", column = "ENTREZID")
+
+# Reactome pathways
+gsea_Reactome <- gsePathway(lfc_list, organism = "mouse", pvalueCutoff = 1, nPerm = 10000)
+gsea_Reactome <- setReadable(gsea_Reactome, org.Mm.eg.db, keyType = "ENTREZID")
+
+# KEGG pathways
+gsea_kegg <- gseKEGG(lfc_list, organism = "mmu", pvalueCutoff = 1, nPerm = 10000)
+gsea_kegg <- setReadable(gsea_kegg, org.Mm.eg.db, keyType = "ENTREZID")
+
+View(gsea_Reactome@result)
+View(gsea_kegg@result)
+
+# write.csv(gsea_Reactome@result, "GSEA_files/Lung_D0_Reactome.csv")
+# write.csv(gsea_kegg@result, "GSEA_files/Lung_D0_KEGG.csv")
+
+# write.csv(gsea_Reactome@result, "GSEA_files/Lung_D3_Reactome.csv")
+# write.csv(gsea_kegg@result, "GSEA_files/Lung_D3_KEGG.csv")
+
+# write.csv(gsea_Reactome@result, "GSEA_files/Lung_D9_Reactome.csv")
+# write.csv(gsea_kegg@result, "GSEA_files/Lung_D9_KEGG.csv")
+```
+
+```{r D0 DEG heatmap}
+Lung_D0_DEGs <- read.csv("GSEA_files/Lung_D0_DEGs.csv", row.names = 1) %>% 
+  mutate(gene = rownames(.))
+
+specific_gene_D0 <- c("Cd44", "Pdcd1", "Cd14", "Ly6c2", "Crp", "Fas", "Plg", "F2", "Apoe", "Apoc1", "Apoc2", "Bhlhe41", "Serpina1a", "Serpina1b", "Serpina1c", "Serpina1d")
+# Now reorder by decreasing logFC
+specific_gene_D0 <- Lung_D0_DEGs %>% filter(gene %in% specific_gene_D0) %>% arrange(-log2FoldChange) %>% pull(gene)
+
+specific_gene_D0_assay <- assay(rld[specific_gene_D0, ])
+
+pheatmap(specific_gene_D0_assay, cluster_cols = F, cluster_rows = F,
+         annotation_colors = heatmap_colors, show_colnames = F,
+         treeheight_row = 0, treeheight_col = 0,
+         clustering_method = "ward.D2", scale = "row", fontsize_row = 8, 
+         fontsize_col = 8, cellwidth = 8, cellheight = 8, 
+         labels_col = coldata$cell_name,
+         gaps_col = c(2, 4, 7, 10, 12),
+         # gaps_col = c(2),
+         gaps_row = which((Lung_D0_DEGs %>% filter(gene %in% specific_gene_D0) %>% arrange(-log2FoldChange) %>% pull(log2FoldChange)) < 0)[1] - 1, # Split Aged and Young
+         main = "Day 0 DEGs",
+         breaks = seq(-2.1, 2.1, length.out = 100), # Manually adjust scale max for paper revision, as per Reviewer 1's suggestion
+         # annotation_col = my_treatment, filename = "Figures_Lung_3_Timepoints/03_Heatmap_D0_DEGs.pdf")
+         annotation_col = my_treatment, filename = "Figures_Lung_3_Timepoints/03_Heatmap_D0_DEGs_rescaled.pdf")
+```
+
+```{r D3 DEG heatmap}
+Lung_D3_DEGs <- read.csv("GSEA_files/Lung_D3_DEGs.csv", row.names = 1) %>% 
+  mutate(gene = rownames(.))
+
+specific_gene_D3 <- c("Ptprc", "Cd19", "Cd3g", "Cd74", "Cd83", "C1qa", "C1qb", "C1d", "Bhlhe41", "Serpina3f", "Serpina3g")
+# Now reorder by decreasing logFC
+specific_gene_D3 <- Lung_D3_DEGs %>% filter(gene %in% specific_gene_D3) %>% arrange(-log2FoldChange) %>% pull(gene)
+
+specific_gene_D3_assay <- assay(rld[specific_gene_D3, ])
+
+pheatmap(specific_gene_D3_assay, cluster_cols = F, cluster_rows = F,
+         annotation_colors = heatmap_colors, show_colnames = F,
+         treeheight_row = 0, treeheight_col = 0,
+         clustering_method = "ward.D2", scale = "row", fontsize_row = 8, 
+         fontsize_col = 8, cellwidth = 8, cellheight = 8, 
+         labels_col = coldata$cell_name,
+         gaps_col = c(2, 4, 7, 10, 12),
+         gaps_row = which((Lung_D3_DEGs %>% filter(gene %in% specific_gene_D3) %>% arrange(-log2FoldChange) %>% pull(log2FoldChange)) < 0)[1] - 1, # Split Aged and Young
+         main = "Day 3 DEGs",
+         annotation_col = my_treatment, filename = "Figures_Lung_3_Timepoints/03_Heatmap_D3_DEGs.pdf", height = 2)
+```
+
+```{r D9 DEG heatmap}
+Lung_D9_DEGs <- read.csv("GSEA_files/Lung_D9_DEGs.csv", row.names = 1) %>% 
+  mutate(gene = rownames(.))
+
+specific_gene_D9 <- c("Pdgfrb", "Krt17", "Cxcr6", "Wfdc17", "Isg15", "Isg20", "Ifit1", "Ifit3", "Ppbp", "Serpina1a", "Serpina1b", "Serpina1d")
+# Serpina1a/b/d - alpha-1-antitrypsin 1-1/2/4, inhibit collagen breakdown
+# Now reorder by decreasing logFC
+specific_gene_D9 <- Lung_D9_DEGs %>% filter(gene %in% specific_gene_D9) %>% arrange(-log2FoldChange) %>% pull(gene)
+
+specific_gene_D9_assay <- assay(rld[specific_gene_D9, ])
+
+pheatmap(specific_gene_D9_assay, cluster_cols = F, cluster_rows = F,
+         annotation_colors = heatmap_colors, show_colnames = F,
+         treeheight_row = 0, treeheight_col = 0,
+         clustering_method = "ward.D2", scale = "row", fontsize_row = 8, 
+         fontsize_col = 8, cellwidth = 8, cellheight = 8, 
+         labels_col = coldata$cell_name,
+         gaps_col = c(2, 4, 7, 10, 12),
+         gaps_row = which((Lung_D9_DEGs %>% filter(gene %in% specific_gene_D9) %>% arrange(-log2FoldChange) %>% pull(log2FoldChange)) < 0)[1] - 1, # Split Aged and Young
+         main = "Day 9 DEGs",
+         # breaks = seq(-2.1, 2.1, length.out = 100), # Manually adjust scale max for paper revision, as per Reviewer 1's suggestion
+         # annotation_col = my_treatment, filename = "Figures_Lung_3_Timepoints/03_Heatmap_D9_DEGs.pdf", height = 2)
+         annotation_col = my_treatment, filename = "Figures_Lung_3_Timepoints/03_Heatmap_D9_DEGs_rescaled.pdf", height = 2)
+```
+
+```{r Combined Reactome plot}
+Reactome_Lung_D0 <- read.csv("GSEA_files/Lung_D0_Reactome.csv", row.names = 1) %>% 
+  mutate(Timepoint = "Day 0")
+Reactome_Lung_D3 <- read.csv("GSEA_files/Lung_D3_Reactome.csv", row.names = 1) %>% 
+  mutate(Timepoint = "Day 3")
+Reactome_Lung_D9 <- read.csv("GSEA_files/Lung_D9_Reactome.csv", row.names = 1) %>% 
+  mutate(Timepoint = "Day 9")
+Reactome_Lung <- rbind(Reactome_Lung_D0, Reactome_Lung_D3, Reactome_Lung_D9) %>% 
+  dplyr::rename("Pathway" = 2)
+
+# Only pick pathways that are significant (p.adjust < 0.05)
+Reactome_Lung %>%
+  filter(p.adjust < 0.05) %>% 
+  filter(ID %in% c(
+    "R-MMU-76002", # Platelet activation, signaling and aggregation
+    "R-MMU-392170", # ADP signalling through P2Y purinoceptor 12
+    "R-MMU-140875", # Common Pathway of Fibrin Clot Formation
+    "R-MMU-76009", # Platelet Aggregation (Plug Formation)
+    "R-MMU-140877", # Formation of Fibrin Clot (Clotting Cascade)
+    "R-MMU-166658", # Complement cascade
+    "R-MMU-380108", # Chemokine receptors bind chemokines
+    "R-MMU-622312", # Inflammasomes
+    "R-MMU-168138", # Toll Like Receptor 9 (TLR9) Cascade
+    "R-MMU-5218859", # Regulated Necrosis
+    "R-MMU-512988", # Interleukin-3, Interleukin-5 and GM-CSF signaling
+    "R-MMU-389948", # PD-1 signaling
+    "R-MMU-8948216", # Collagen chain trimerization
+    "R-MMU-73894", # DNA Repair
+    "R-MMU-68875" # Mitotic Prophase
+  )) %>%
+  ggplot(aes(x = Timepoint, y = NES)) +
+  geom_point(aes(color = Pathway, size = p.adjust)) +
+  geom_line(aes(group = Pathway, color = Pathway)) +
+  theme_minimal() +
+  scale_size(trans = "reverse", name = "Adjusted p-value") +
+  ylim(-2.8, 2.8) +
+  geom_hline(yintercept = 0, color = "black", size = 0.5) +
+  labs(title = "Lung - Reactome pathways") +
+  theme(plot.title = element_text(hjust = 0.5))
+# ggsave("Figures_Lung_3_Timepoints/04_Lung_Reactome_Timeline.pdf", width = 8, height = 6)
+```
+
+```{r Combined KEGG plot}
+KEGG_Lung_D0 <- read.csv("GSEA_files/Lung_D0_KEGG.csv", row.names = 1) %>% 
+  mutate(Timepoint = "Day 0")
+KEGG_Lung_D3 <- read.csv("GSEA_files/Lung_D3_KEGG.csv", row.names = 1) %>% 
+  mutate(Timepoint = "Day 3")
+KEGG_Lung_D9 <- read.csv("GSEA_files/Lung_D9_KEGG.csv", row.names = 1) %>% 
+  mutate(Timepoint = "Day 9")
+KEGG_Lung <- rbind(KEGG_Lung_D0, KEGG_Lung_D3, KEGG_Lung_D9) %>% 
+  dplyr::rename("Pathway" = 2)
+
+KEGG_Lung %>%
+  filter(p.adjust < 0.05) %>% 
+  filter(ID %in% c(
+    "mmu04060", # Cytokine-cytokine receptor interaction
+    "mmu04660", # T cell receptor signaling pathway
+    # "mmu04657", # IL-17 signaling pathway
+    "mmu04979", # Cholesterol metabolism
+    "mmu01212", # Fatty acid metabolism
+    "mmu03320", # PPAR signaling pathway
+    "mmu04062", # Chemokine signaling pathway
+    "mmu04210", # Apoptosis
+    "mmu04668" # TNF signaling pathway
+  )) %>%
+  ggplot(aes(x = Timepoint, y = NES)) +
+  geom_point(aes(color = Pathway, size = p.adjust)) +
+  geom_line(aes(group = Pathway, color = Pathway)) +
+  theme_minimal() +
+  scale_size(trans = "reverse", name = "Adjusted p-value") +
+  ylim(-2.9, 2.9) +
+  geom_hline(yintercept = 0, color = "black", size = 0.5) +
+  labs(title = "Lung - KEGG pathways") +
+  theme(plot.title = element_text(hjust = 0.5))
+# ggsave("Figures_Lung_3_Timepoints/04_Lung_KEGG_Timeline.pdf", width = 7, height = 6)
+```
+
+
+
+
