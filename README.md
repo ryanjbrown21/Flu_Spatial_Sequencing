@@ -1,4 +1,4 @@
-# Flu_Spatial_Sequencing
+# Flu Spatial Sequencing
 
 This repository contains the code used to analyize Flu Spatial Sequencing data. 
 
