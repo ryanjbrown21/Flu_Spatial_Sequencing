@@ -1,0 +1,2287 @@
+---
+title: "Visium_Flu_Aging"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Library}
+library(Seurat)
+library(tidyverse)
+library(lisa)
+BiocManager::install("SPOTlight")
+
+library(SPOTlight)
+library(lmtest)
+
+#install.packages("Polychrome")
+library(Polychrome) # For making palettes with several colors
+
+source("~/Documents/MCW/3_PhD/Bioinformatics_Collaborations/Functions_themes.R")
+```
+
+This script excludes Day 7 (no single-cell from Day 7 and not using bulk RNA-seq data from Day 7, so excluding from Visium for consistency)
+
+```{zsh Install hdf5 - Terminal}
+# Install hdf5 via termianl to read HDF5 files (.h5 file extension)
+# Debian-based (e.g. Debian >= 8.0, Ubuntu >= 15.04): 'sudo apt-get install libhdf5-dev'
+# - OS X using Homebrew: 'brew install hdf5'
+
+# If using an older Mac or a Linux OS, run this in a bash chunk, not a zsh chunk
+brew install hdf5
+
+# I had the following error
+  # Error: The `brew link` step did not complete successfully
+  # The formula built, but is not symlinked into /usr/local
+  # Could not symlink bin/gfortran
+  # Target /usr/local/bin/gfortran
+  # already exists. You may want to remove it:
+  #   rm '/usr/local/bin/gfortran'
+# Solved the error by removing the affected file and reinstalling hdf5 via homebrew
+  # rm /usr/local/bin/gfortran
+  # brew reinstall hdf5
+```
+
+```{r Install hdf5r - R}
+# install.packages("hdf5r")
+```
+
+```{r Load raw data}
+# Need "Spatial" folder and "filtered_feature_bc_matrix.h5" in the same folder entered into Load10X_Spatial
+
+Day0_Young <- Load10X_Spatial("../Matrix_files/A1_Day0_Young/", slice = "Day 0 Young")
+Day0_Aged <- Load10X_Spatial("../Matrix_files/B1_Day0_Old/", slice = "Day 0 Aged")
+Day3_Young <- Load10X_Spatial("../../../MYK042_Visium/Visium_analysis/Matrix_files/A1_Day3_Young/", slice = "Day 3 Young")
+Day3_Aged <- Load10X_Spatial("../../../MYK042_Visium/Visium_analysis/Matrix_files/B1_Day3_Old/", slice = "Day 3 Aged")
+Day9_Young <- Load10X_Spatial("../Matrix_files/C1_Day9_Young/", slice = "Day 9 Young")
+Day9_Aged <- Load10X_Spatial("../Matrix_files/D1_Day9_Old/", slice = "Day 9 Aged")
+
+# Add sample names to barcodes
+Day0_Young <- RenameCells(Day0_Young, add.cell.id = "Day0_Young")
+Day0_Aged <- RenameCells(Day0_Aged, add.cell.id = "Day0_Aged")
+Day3_Young <- RenameCells(Day3_Young, add.cell.id = "Day3_Young")
+Day3_Aged <- RenameCells(Day3_Aged, add.cell.id = "Day3_Aged")
+Day9_Young <- RenameCells(Day9_Young, add.cell.id = "Day9_Young")
+Day9_Aged <- RenameCells(Day9_Aged, add.cell.id = "Day9_Aged")
+
+# Add columns specifying orig.ident, timepoint, and age
+Day0_Young$orig.ident <- "Day0_Young"
+Day0_Aged$orig.ident <- "Day0_Aged"
+Day3_Young$orig.ident <- "Day3_Young"
+Day3_Aged$orig.ident <- "Day3_Aged"
+Day9_Young$orig.ident <- "Day9_Young"
+Day9_Aged$orig.ident <- "Day9_Aged"
+
+Day0_Young$Timepoint <- "Day 0"
+Day0_Aged$Timepoint <- "Day 0"
+Day3_Young$Timepoint <- "Day 3"
+Day3_Aged$Timepoint <- "Day 3"
+Day9_Young$Timepoint <- "Day 9"
+Day9_Aged$Timepoint <- "Day 9"
+
+Day0_Young$Age <- "Young"
+Day0_Aged$Age <- "Aged"
+Day3_Young$Age <- "Young"
+Day3_Aged$Age <- "Aged"
+Day9_Young$Age <- "Young"
+Day9_Aged$Age <- "Aged"
+```
+
+```{r Check spatial gene expression}
+# nCount is total recovered transcripts, nFeature is number of unique genes
+
+VlnPlot(Day0_Young, features = c("nCount_Spatial", "nFeature_Spatial"), pt.size = 0.1)
+SpatialFeaturePlot(Day0_Young, features = "nCount_Spatial", alpha = 1) +
+  theme(legend.position = "right")
+
+VlnPlot(Day0_Aged, features = c("nCount_Spatial", "nFeature_Spatial"), pt.size = 0.1)
+SpatialFeaturePlot(Day0_Aged, features = "nCount_Spatial", alpha = 1) +
+  theme(legend.position = "right")
+
+VlnPlot(Day3_Young, features = c("nCount_Spatial", "nFeature_Spatial"), pt.size = 0.1)
+SpatialFeaturePlot(Day3_Young, features = "nCount_Spatial", alpha = 1) +
+  theme(legend.position = "right")
+
+VlnPlot(Day3_Aged, features = c("nCount_Spatial", "nFeature_Spatial"), pt.size = 0.1)
+SpatialFeaturePlot(Day3_Aged, features = "nCount_Spatial", alpha = 1) +
+  theme(legend.position = "right")
+
+VlnPlot(Day9_Young, features = c("nCount_Spatial", "nFeature_Spatial"), pt.size = 0.1)
+SpatialFeaturePlot(Day9_Young, features = "nCount_Spatial", alpha = 1) +
+  theme(legend.position = "right")
+
+VlnPlot(Day9_Aged, features = c("nCount_Spatial", "nFeature_Spatial"), pt.size = 0.1)
+SpatialFeaturePlot(Day9_Aged, features = "nCount_Spatial", alpha = 1) +
+  theme(legend.position = "right")
+
+SpatialFeaturePlot(Day9_Aged, features = "nCount_Spatial", alpha = 0.3) +
+  theme(legend.position = "right")
+
+# From 10x web_summary files, Day0_Young has more reads per spot than other samples (50k vs 40k)
+```
+
+```{r scTransform and integrate}
+DefaultAssay(Day0_Young) <- "Spatial"
+DefaultAssay(Day0_Aged) <- "Spatial"
+DefaultAssay(Day3_Young) <- "Spatial"
+DefaultAssay(Day3_Aged) <- "Spatial"
+DefaultAssay(Day9_Young) <- "Spatial"
+DefaultAssay(Day9_Aged) <- "Spatial"
+
+# Increase size limits on variables R allows to be used for parallel processing (default is 500 MB)
+options(future.globals.maxSize = 5000 * 1024^2)
+# New max will be 5000 MB = 5.0 GB
+
+# scTransform uses Pearson residuals from a regularized negative binoial distribution that uses sequencing depth as a covariate to remove technical batch effects
+# scTransform replaces the Normalize(), FindVariableFeatures(), and ScaleData() functions
+
+Day0_Young <- SCTransform(Day0_Young, assay = "Spatial", verbose = FALSE)
+Day0_Aged <- SCTransform(Day0_Aged, assay = "Spatial", verbose = FALSE)
+Day3_Young <- SCTransform(Day3_Young, assay = "Spatial", verbose = FALSE)
+Day3_Aged <- SCTransform(Day3_Aged, assay = "Spatial", verbose = FALSE)
+Day9_Young <- SCTransform(Day9_Young, assay = "Spatial", verbose = FALSE)
+Day9_Aged <- SCTransform(Day9_Aged, assay = "Spatial", verbose = FALSE)
+# Ignore the warnings saying "iteration limit reached" - see https://github.com/ChristophH/sctransform/issues/25
+
+Lung.list <- list(Day0_Young, Day0_Aged, Day3_Young, Day3_Aged, Day9_Young, Day9_Aged)
+
+Lung.features <- SelectIntegrationFeatures(object.list = Lung.list, nfeatures = 3000)
+
+Lung_Reg.list <- PrepSCTIntegration(object.list = Lung.list, anchor.features = Lung.features, verbose = FALSE)
+
+Lung.anchors <- FindIntegrationAnchors(object.list = Lung_Reg.list, normalization.method = "SCT", anchor.features = Lung.features, verbose = FALSE)
+# Ignore the warning about setting a random seed for the "future" package, this function doesn't require random seeds - see https://github.com/satijalab/seurat/issues/3808
+
+Lung <- IntegrateData(anchorset = Lung.anchors, normalization.method = "SCT", verbose = FALSE)
+```
+
+```{r UMAP}
+DefaultAssay(Lung) <- "integrated"
+
+Lung <- RunPCA(Lung, npcs = 30)
+Lung <- RunUMAP(Lung, dims = 1:30)
+Lung <- FindNeighbors(Lung, reduction = "pca", dims = 1:30)
+Lung <- FindClusters(Lung, resolution = 0.2)
+# Use 0.2 instead of 0.3; 0.3 makes stromal clusters more complicated
+
+Lung$orig.ident <- factor(Lung$orig.ident, levels = c("Day0_Young", "Day0_Aged", "Day3_Young", "Day3_Aged", "Day9_Young", "Day9_Aged"))
+Lung$Age <- factor(Lung$Age, levels = c("Young", "Aged"))
+
+
+DimPlot(Lung)
+# ggsave("Figures/01_UMAP_Cluster.pdf")
+# ggsave("Figures/01_UMAP_Cluster.png")
+
+
+DimPlot(Lung, split.by = "orig.ident", ncol = 4)
+# ggsave("Figures/01_UMAP_Sample_split.pdf")
+# ggsave("Figures/01_UMAP_Sample_split.png")
+
+DimPlot(Lung, group.by = "orig.ident", cols = c(lisa_palette("EdvardMunch"), lisa_palette("ClaudeMonet_1")))
+# ggsave("Figures/01_UMAP_Sample.pdf")
+# ggsave("Figures/01_UMAP_Sample.png")
+
+DimPlot(Lung, split.by = "Timepoint", ncol = 2)
+# ggsave("Figures/01_UMAP_Timepoint_split.pdf")
+# ggsave("Figures/01_UMAP_Timepoint_split.png")
+
+DimPlot(Lung, split.by = "Age")
+# ggsave("Figures/01_UMAP_Age_split.pdf")
+# ggsave("Figures/01_UMAP_Age_split.png")
+```
+
+```{r Spatial DimPlots}
+# One combined, separate others by sample without legend
+SpatialDimPlot(Lung)
+# ggsave("Figures/03_Spatial_DimPlot.png", width = 16, height = 4)
+
+SpatialDimPlot(Lung, images = "Day.0.Young") +
+  NoLegend()
+# ggsave("Figures/03_Spatial_DimPlot_D0_Young.png")
+
+SpatialDimPlot(Lung, images = "Day.0.Aged") +
+  NoLegend()
+# ggsave("Figures/03_Spatial_DimPlot_D0_Aged.png")
+
+SpatialDimPlot(Lung, images = "Day.3.Young") +
+  NoLegend()
+# ggsave("Figures/03_Spatial_DimPlot_D3_Young.png")
+
+SpatialDimPlot(Lung, images = "Day.3.Aged") +
+  NoLegend()
+# ggsave("Figures/03_Spatial_DimPlot_D3_Aged.png")
+
+SpatialDimPlot(Lung, images = "Day.9.Young") +
+  NoLegend()
+# ggsave("Figures/03_Spatial_DimPlot_D9_Young.png")
+
+SpatialDimPlot(Lung, images = "Day.9.Aged") +
+  NoLegend()
+# ggsave("Figures/03_Spatial_DimPlot_D9_Aged.png")
+```
+
+```{r Normalize Spatial assay}
+# Need to normalize Spatial assay after running scTransform
+DefaultAssay(Lung) <- "Spatial"
+
+Lung <- NormalizeData(Lung)
+```
+
+```{r Markers}
+DefaultAssay(Lung) <- "Spatial"
+
+Lung_markers <- FindAllMarkers(Lung, only.pos = T)
+# write.csv(Lung_markers, "Lung_markers_3timepoints_res02.csv")
+Lung_markers <- read.csv("Lung_markers_3timepoints_res02.csv", row.names = 1)
+
+Lung_markers %>% group_by(cluster) %>% top_n(20, wt = avg_log2FC)
+
+
+VlnPlot(Lung, features = c("Ptprc", "Cd8a", "Itgam", "Itgax", "Siglecf", "Cd19", "Cd4", "Itgb2"), pt.size = 0)
+DotPlot(Lung, features = c("Ptprc", "Cd8a", "Itgam", "Itgax", "Siglecf", "Cd19", "Cd4", "Ly6c2"))
+DotPlot(Lung, features = c("Ptprc", "Cd8a", "Itgam", "Itgax", "Siglecf", "Cd19", "Cd4", "Ly6c2"), split.by = "orig.ident", cols = gg_color_hue(8))
+
+SpatialFeaturePlot(Lung, features = c("Itgam", "Itgb2", "Ptprc"))
+SpatialFeaturePlot(Lung, features = c("Cd8a", "Cd4", "Itgam"))
+
+VlnPlot(Lung, features = c("Pecam1", "Cd34", "Siglecf", "Igha", "Myl12a", "Il1rl1"), pt.size = 0)
+DotPlot(Lung, features = c("Pecam1", "Cd34", "Myl12a"))
+SpatialFeaturePlot(Lung, features = c("Pecam1", "Cd34"))
+
+DotPlot(Lung, features = c("Sftpb", "Sftpa1"))
+SpatialFeaturePlot(Lung, features = c("Sftpb"), images = c("Day.0.Young", "Day.0.Old", "Day.3.Young", "Day.3.Old"))
+SpatialFeaturePlot(Lung, features = c("Sftpb"), images = c("Day.7.Young", "Day.7.Old", "Day.9.Young", "Day.9.Old"))
+
+SpatialFeaturePlot(Lung, features = c("Car4"), images = c("Day.0.Young", "Day.0.Old", "Day.3.Young", "Day.3.Old"))
+SpatialFeaturePlot(Lung, features = c("Car4"), images = c("Day.7.Young", "Day.7.Old", "Day.9.Young", "Day.9.Old"))
+
+VlnPlot(Lung, features = c("Car4"), group.by = "Timepoint", pt.size = 0)
+VlnPlot(Lung, features = c("Car4", "Cd34"), group.by = "orig.ident", pt.size = 0)
+DotPlot(Lung, features = c("Car4", "Cd34"), group.by = "orig.ident")
+
+SpatialFeaturePlot(Lung, features = c("Cd8a"), images = c("Day.0.Young", "Day.0.Old", "Day.3.Young", "Day.3.Old"))
+SpatialFeaturePlot(Lung, features = c("Cd8a"), images = c("Day.7.Young", "Day.7.Old", "Day.9.Young", "Day.9.Old"))
+
+SpatialFeaturePlot(Lung, features = c("Cd4"), images = c("Day.0.Young", "Day.0.Old", "Day.3.Young", "Day.3.Old"))
+SpatialFeaturePlot(Lung, features = c("Cd4"), images = c("Day.7.Young", "Day.7.Old", "Day.9.Young", "Day.9.Old"))
+
+SpatialFeaturePlot(Lung, features = c("Itgam"), images = c("Day.0.Young", "Day.0.Old", "Day.3.Young", "Day.3.Old"))
+SpatialFeaturePlot(Lung, features = c("Itgam"), images = c("Day.7.Young", "Day.7.Old", "Day.9.Young", "Day.9.Old"))
+
+DotPlot(Lung, features = c("Sftpd", "mt-Co3", "Myl4", "Scgb1a1", "Cyp2f2", "Foxj1", "Hopx", "Ptprc", "Hba-a1", "Ear2", "Col1a1", "Vwf", "Pecam1", "Vcam1", "Csf3r", "Msln", "Pf4")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title = element_blank())
+```
+
+Cluster - Identity - Markers
+0 - Pneumocytes - Sftpc, Sftpd, Sftpa1, Hopx
+1 - Immune cells - Ptprc, Ear2
+2 - Smooth muscle, mitochondrial genes
+3 - Epithelial cells (club, goblet, ciliated) - Scgb1a1, Cyp2f2, Foxj1
+4 - RBCs - Hba-a1
+5 - Fibroblasts - Col1a1
+6 - Endothelial cells - Vwf, Pecam1
+7 - Neutrophils - Csf3r, Ly6g
+8 - Mesothelial cells - Msln, Upk3b
+9 - Platelets - Pf4
+
+```{r Rename clusters}
+Lung <- RenameIdents(Lung, 
+                     "0" = "Pneumocytes",
+                     "1" = "Immune cells",
+                     "2" = "Smooth muscle",
+                     "3" = "Epithelial cells",
+                     "4" = "RBCs",
+                     "5" = "Fibroblasts",
+                     "6" = "Endothelial cells",
+                     "7" = "Neutrophils",
+                     "8" = "Mesothelial cells",
+                     "9" = "Platelets")
+
+DimPlot(Lung, label = T) +
+  NoLegend()
+```
+
+```{r Save load}
+# saveRDS(Lung, "RDS_files.nosync/Lung_3timepoints.RDS")
+Lung <- readRDS("RDS_files.nosync/Lung_3timepoints.RDS")
+
+Lung$Cluster_names <- Lung@active.ident
+
+# Add spot grid (not pixel) coordinates to the metadata for convenience
+Lung$Visium_Row <- NA
+Lung$Visium_Col <- NA
+Lung@meta.data[rownames(Lung@images$Day.0.Young@coordinates), "Visium_Row"] <- Lung@images$Day.0.Young@coordinates[ , "row"]
+Lung@meta.data[rownames(Lung@images$Day.0.Young@coordinates), "Visium_Col"] <- Lung@images$Day.0.Young@coordinates[ , "col"]
+Lung@meta.data[rownames(Lung@images$Day.0.Aged@coordinates), "Visium_Row"] <- Lung@images$Day.0.Aged@coordinates[ , "row"]
+Lung@meta.data[rownames(Lung@images$Day.0.Aged@coordinates), "Visium_Col"] <- Lung@images$Day.0.Aged@coordinates[ , "col"]
+Lung@meta.data[rownames(Lung@images$Day.3.Young@coordinates), "Visium_Row"] <- Lung@images$Day.3.Young@coordinates[ , "row"]
+Lung@meta.data[rownames(Lung@images$Day.3.Young@coordinates), "Visium_Col"] <- Lung@images$Day.3.Young@coordinates[ , "col"]
+Lung@meta.data[rownames(Lung@images$Day.3.Aged@coordinates), "Visium_Row"] <- Lung@images$Day.3.Aged@coordinates[ , "row"]
+Lung@meta.data[rownames(Lung@images$Day.3.Aged@coordinates), "Visium_Col"] <- Lung@images$Day.3.Aged@coordinates[ , "col"]
+Lung@meta.data[rownames(Lung@images$Day.9.Young@coordinates), "Visium_Row"] <- Lung@images$Day.9.Young@coordinates[ , "row"]
+Lung@meta.data[rownames(Lung@images$Day.9.Young@coordinates), "Visium_Col"] <- Lung@images$Day.9.Young@coordinates[ , "col"]
+Lung@meta.data[rownames(Lung@images$Day.9.Aged@coordinates), "Visium_Row"] <- Lung@images$Day.9.Aged@coordinates[ , "row"]
+Lung@meta.data[rownames(Lung@images$Day.9.Aged@coordinates), "Visium_Col"] <- Lung@images$Day.9.Aged@coordinates[ , "col"]
+
+View(Lung@meta.data)
+```
+
+```{r Labeled UMAP}
+DimPlot(Lung, label = T) +
+  NoLegend()
+# ggsave("Figures/01_UMAP_labeled.png")
+```
+
+```{r Cluster breakdown}
+table(Lung@active.ident, Lung$orig.ident)
+table(Lung@active.ident, Lung$orig.ident) %>% prop.table(margin = 2) * 100
+
+table(Lung@active.ident, Lung$orig.ident) %>%
+  prop.table(margin = 2) %>%
+  as.data.frame() %>% 
+  dplyr::rename(Cluster = Var1, Sample = Var2) %>% 
+  ggplot(aes(x = Sample, y = Freq, fill = Cluster)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal() +
+  theme(panel.grid.major.x = element_blank()) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  ylab("Frequency")
+ggsave("Figures/02_Cluster_frequency_bar_origident.pdf")
+
+table(Lung@active.ident, Lung$orig.ident) %>%
+  prop.table(margin = 2) %>%
+  as.data.frame() %>% 
+  dplyr::rename(Cluster = Var1, Sample = Var2) %>% 
+  mutate(Sample = gsub("_", " ", Sample)) %>% 
+  mutate(Sample = gsub("Day", "Day ", Sample)) %>% 
+  mutate(Sample = gsub("Old", "Aged", Sample)) %>% 
+  mutate(Sample = factor(Sample,
+                         levels = c("Day 0 Young", "Day 0 Aged", "Day 3 Young", "Day 3 Aged", "Day 9 Young", "Day 9 Aged"))) %>% 
+  ggplot(aes(x = Sample, y = Freq, fill = Cluster)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal() +
+  theme(panel.grid.major.x = element_blank()) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  ylab("Frequency") +
+  geom_text(
+    aes(
+      y = Freq,
+      label = ifelse(
+        Freq > 0.03,
+        paste0(round(Freq * 100, 1), "%"),
+        "")),
+    position = position_stack(vjust = 0.5),
+    size = 4)
+ggsave("Figures/02_Cluster_frequency_bar_origident_labeled.pdf", width = 10, height = 5)
+
+table(Lung@active.ident, Lung$Timepoint) %>%
+  prop.table(margin = 2) %>%
+  as.data.frame() %>% 
+  dplyr::rename(Cluster = Var1, Sample = Var2) %>% 
+  ggplot(aes(x = Sample, y = Freq, fill = Cluster)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal() +
+  theme(panel.grid.major.x = element_blank()) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  ylab("Frequency") +
+  xlab("Timepoint")
+ggsave("Figures/02_Cluster_frequency_bar_Timepoint.pdf")
+
+table(Lung@active.ident, Lung$Timepoint) %>%
+  prop.table(margin = 2) %>%
+  as.data.frame() %>% 
+  dplyr::rename(Cluster = Var1, Sample = Var2) %>% 
+  ggplot(aes(x = Sample, y = Freq, fill = Cluster)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal() +
+  theme(panel.grid.major.x = element_blank()) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  ylab("Frequency") +
+  xlab("Timepoint") +
+  geom_text(
+    aes(
+      y = Freq,
+      label = ifelse(
+        Freq > 0.03,
+        paste0(round(Freq * 100, 1), "%"),
+        "")),
+    position = position_stack(vjust = 0.5),
+    size = 4)
+ggsave("Figures/02_Cluster_frequency_bar_Timepoint_labeled.pdf", width = 7, height = 5)
+
+table(Lung@active.ident, Lung$Age) %>%
+  prop.table(margin = 2) %>%
+  as.data.frame() %>% 
+  dplyr::rename(Cluster = Var1, Sample = Var2) %>% 
+  mutate(Sample = gsub("Old", "Aged", Sample)) %>% 
+  mutate(Sample = factor(Sample, levels = c("Young", "Aged"))) %>% 
+  ggplot(aes(x = Sample, y = Freq, fill = Cluster)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal() +
+  theme(panel.grid.major.x = element_blank()) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  ylab("Frequency") +
+  xlab("Timepoint")
+ggsave("Figures/02_Cluster_frequency_bar_Age.pdf")
+
+table(Lung@active.ident, Lung$Age) %>%
+  prop.table(margin = 2) %>%
+  as.data.frame() %>% 
+  dplyr::rename(Cluster = Var1, Sample = Var2) %>% 
+  mutate(Sample = gsub("Old", "Aged", Sample)) %>% 
+  mutate(Sample = factor(Sample, levels = c("Young", "Aged"))) %>% 
+  ggplot(aes(x = Sample, y = Freq, fill = Cluster)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal() +
+  theme(panel.grid.major.x = element_blank()) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  ylab("Frequency") +
+  xlab("Timepoint") +
+  geom_text(
+    aes(
+      y = Freq,
+      label = ifelse(
+        Freq > 0.03,
+        paste0(round(Freq * 100, 1), "%"),
+        "")),
+    position = position_stack(vjust = 0.5),
+    size = 4)
+ggsave("Figures/02_Cluster_frequency_bar_Age_labeled.pdf", width = 5, height = 5)
+```
+
+
+```{r Visium Marker Dotplot}
+DotPlot(Lung, features = c("Sftpa1", "mt-Co3", "Myh6", "Scgb1a1", "Cyp2f2", "Foxj1", "Hopx", "Ptprc", "Hba-a1", "Ear2", "Col1a1", "Vwf", "Csf3r", "Upk3b", "Pf4")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title = element_blank())
+# ggsave("Figures/04_Visium_cluster_markers_DotPlot.pdf")
+
+VlnPlot(Lung, features = c("Sftpa1", "mt-Co3", "Scgb1a1", "Ptprc"), pt.size = 0)
+
+FeaturePlot(Lung, features = c("Ear2"))
+```
+
+```{r Check markers on featureplots}
+SpatialFeaturePlot(Lung, features = c("Ptprc"), images = c("Day.0.Young", "Day.3.Young", "Day.7.Young", "Day.9.Young"))
+SpatialFeaturePlot(Lung, features = c("Ptprc"), images = c("Day.0.Old", "Day.3.Old", "Day.7.Old", "Day.9.Old"))
+
+SpatialFeaturePlot(Lung, features = c("Itgam"), images = c("Day.0.Young", "Day.3.Young", "Day.7.Young", "Day.9.Young"))
+SpatialFeaturePlot(Lung, features = c("Itgam"), images = c("Day.0.Old", "Day.3.Old", "Day.7.Old", "Day.9.Old"))
+
+SpatialFeaturePlot(Lung, features = c("Gzmb"), images = c("Day.0.Young", "Day.3.Young", "Day.7.Young", "Day.9.Young"))
+SpatialFeaturePlot(Lung, features = c("Gzmb"), images = c("Day.0.Old", "Day.3.Old", "Day.7.Old", "Day.9.Old"))
+
+SpatialFeaturePlot(Lung, features = c("Casp3"), images = c("Day.0.Young", "Day.3.Young", "Day.7.Young", "Day.9.Young"))
+SpatialFeaturePlot(Lung, features = c("Casp3"), images = c("Day.0.Old", "Day.3.Old", "Day.7.Old", "Day.9.Old"))
+```
+
+```{r Module scores - Car4}
+# Try using module scores to look for individual cell types or cell-cell pairings based on unique markers
+Lung <- AddModuleScore(Lung, features = c("Car4", "Cd34", "Pecam1", "Kdr", "Fibin", "Cyp4b1", "Icam2"), name = "Geneset_Car4_EC")
+
+SpatialFeaturePlot(Lung, features = c("Geneset_Car4_EC1"), images = c("Day.0.Young", "Day.3.Young", "Day.7.Young", "Day.9.Young"))
+SpatialFeaturePlot(Lung, features = c("Geneset_Car4_EC1"), images = c("Day.0.Old", "Day.3.Old", "Day.7.Old", "Day.9.Old"))
+
+VlnPlot(Lung, features = c("Geneset_Car4_EC1"), group.by = "orig.ident", pt.size = 0) +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = 1, size = 1, linetype = "solid")
+
+# Car4 module score over time
+summarize(group_by(Lung@meta.data, Age, Timepoint), 
+          Mean = mean(Geneset_Car4_EC1)) %>% 
+  ggplot(aes(x = Timepoint, y = Mean, group = Age, color = Age, fill = Age)) +
+  geom_point() +
+  geom_line() +
+  scale_color_manual(values = c("forestgreen", "gray70")) +
+  scale_fill_manual(values = c("forestgreen", "gray70")) +
+  theme_minimal() +
+  ylab("Geneset_Car4_EC module score")
+
+### XYZ - Check Car4 module score/GSEA NES in bulk RNA-seq data over time
+```
+
+```{r Module scores - SLEC/MPEC}
+Lung <- AddModuleScore(Lung, features = c("CD3e", "CD8a", "Klrg1", "Tbx21"), name = "Geneset_SLEC")
+Lung <- AddModuleScore(Lung, features = c("CD3e", "CD8a", "Il7r", "Eomes"), name = "Geneset_MPEC")
+
+
+SpatialFeaturePlot(Lung, features = c("Cd8a"), images = c("Day.0.Young", "Day.3.Young", "Day.7.Young", "Day.9.Young"))
+SpatialFeaturePlot(Lung, features = c("Cd8a"), images = c("Day.0.Old", "Day.3.Old", "Day.7.Old", "Day.9.Old"))
+
+SpatialFeaturePlot(Lung, features = c("Geneset_SLEC1"), images = c("Day.0.Young", "Day.3.Young", "Day.7.Young", "Day.9.Young"))
+SpatialFeaturePlot(Lung, features = c("Geneset_SLEC1"), images = c("Day.0.Old", "Day.3.Old", "Day.7.Old", "Day.9.Old"))
+
+SpatialFeaturePlot(Lung, features = c("Geneset_MPEC1"), images = c("Day.0.Young", "Day.3.Young", "Day.7.Young", "Day.9.Young"))
+SpatialFeaturePlot(Lung, features = c("Geneset_MPEC1"), images = c("Day.0.Old", "Day.3.Old", "Day.7.Old", "Day.9.Old"))
+```
+
+```{r Gary Mouradian - NEB genes}
+# NEBs - neuroepithelial bodies
+# "Cgrp", "Uchl1", "Syp", "Casr", "Nrxn1", "Cpa3", "Ncam1"
+
+SpatialFeaturePlot(Lung, features = c("Slc18a2"), images = c("Day.0.Young", "Day.3.Young", "Day.7.Young", "Day.9.Young"))
+# ggsave("~/Documents/MCW/3 – PhD/Bioinformatics_Collaborations/Gary_Mouradian/Lung_neurons/Spatial_Slc18a2_Young.pdf")
+SpatialFeaturePlot(Lung, features = c("Slc18a2"), images = c("Day.0.Old", "Day.3.Old", "Day.7.Old", "Day.9.Old"))
+# ggsave("~/Documents/MCW/3 – PhD/Bioinformatics_Collaborations/Gary_Mouradian/Lung_neurons/Spatial_Slc18a2_Old.pdf")
+
+SpatialFeaturePlot(Lung, features = c("Cpa3"), images = c("Day.0.Young", "Day.3.Young", "Day.7.Young", "Day.9.Young"))
+# ggsave("~/Documents/MCW/3 – PhD/Bioinformatics_Collaborations/Gary_Mouradian/Lung_neurons/Spatial_Cpa3_Young.pdf")
+SpatialFeaturePlot(Lung, features = c("Cpa3"), images = c("Day.0.Old", "Day.3.Old", "Day.7.Old", "Day.9.Old"))
+# ggsave("~/Documents/MCW/3 – PhD/Bioinformatics_Collaborations/Gary_Mouradian/Lung_neurons/Spatial_Cpa3_Old.pdf")
+
+SpatialFeaturePlot(Lung, features = c("Tph1"), images = c("Day.0.Young", "Day.3.Young", "Day.7.Young", "Day.9.Young"))
+# ggsave("~/Documents/MCW/3 – PhD/Bioinformatics_Collaborations/Gary_Mouradian/Lung_neurons/Spatial_Tph1_Young.pdf")
+SpatialFeaturePlot(Lung, features = c("Tph1"), images = c("Day.0.Old", "Day.3.Old", "Day.7.Old", "Day.9.Old"))
+# ggsave("~/Documents/MCW/3 – PhD/Bioinformatics_Collaborations/Gary_Mouradian/Lung_neurons/Spatial_Tph1_Old.pdf")
+
+SpatialFeaturePlot(Lung, features = c("Uchl1"), images = c("Day.0.Young", "Day.3.Young", "Day.7.Young", "Day.9.Young"))
+# ggsave("~/Documents/MCW/3 – PhD/Bioinformatics_Collaborations/Gary_Mouradian/Lung_neurons/Spatial_Uchl1_Young.pdf")
+SpatialFeaturePlot(Lung, features = c("Uchl1"), images = c("Day.0.Old", "Day.3.Old", "Day.7.Old", "Day.9.Old"))
+# ggsave("~/Documents/MCW/3 – PhD/Bioinformatics_Collaborations/Gary_Mouradian/Lung_neurons/Spatial_Uchl1_Old.pdf")
+
+SpatialFeaturePlot(Lung, features = c("Ncam1"), images = c("Day.0.Young", "Day.3.Young", "Day.7.Young", "Day.9.Young"))
+# ggsave("~/Documents/MCW/3 – PhD/Bioinformatics_Collaborations/Gary_Mouradian/Lung_neurons/Spatial_Ncam1_Young.pdf")
+SpatialFeaturePlot(Lung, features = c("Ncam1"), images = c("Day.0.Old", "Day.3.Old", "Day.7.Old", "Day.9.Old"))
+# ggsave("~/Documents/MCW/3 – PhD/Bioinformatics_Collaborations/Gary_Mouradian/Lung_neurons/Spatial_Ncam1_Old.pdf")
+
+SpatialFeaturePlot(Lung, features = c("Calca"), images = c("Day.0.Young", "Day.3.Young", "Day.7.Young", "Day.9.Young"))
+# ggsave("~/Documents/MCW/3 – PhD/Bioinformatics_Collaborations/Gary_Mouradian/Lung_neurons/Spatial_Calca_Young.pdf")
+SpatialFeaturePlot(Lung, features = c("Calca"), images = c("Day.0.Old", "Day.3.Old", "Day.7.Old", "Day.9.Old"))
+# ggsave("~/Documents/MCW/3 – PhD/Bioinformatics_Collaborations/Gary_Mouradian/Lung_neurons/Spatial_Calca_Old.pdf")
+```
+
+```{r CellChat Neutrophils}
+# CellChat suggests increased Ccl6 signaling to neutrophils in aged mice at day 0 (none in young mice)
+SpatialFeaturePlot(Lung, features = c("Ccl3", "Ccl5"), images = c("Day.0.Young", "Day.0.Old"))
+SpatialFeaturePlot(Lung, features = c("Ccl6", "Ccl9"), images = c("Day.0.Young", "Day.0.Old"))
+
+VlnPlot()
+
+SpatialFeaturePlot(Lung, features = c("Ly6g", "Cxcr2"), images = c("Day.0.Young", "Day.0.Old"))
+SpatialFeaturePlot(Lung, features = c("Ly6g", "Ccr1"), images = c("Day.0.Young", "Day.0.Old"))
+# Definitely looks like more neutrophils in aged (using CXCR2 as a surrogate marker)
+SpatialFeaturePlot(Lung, features = c("S100a9", "Itgam"), images = c("Day.0.Young", "Day.0.Old"))
+
+SpatialFeaturePlot(Lung, features = c("Cd8a", "Cd3e"), images = c("Day.0.Young", "Day.0.Old"))
+```
+
+```{r Neutrophil chemokine colocalization}
+# CellChat suggests Aged neutrophils have lower CXCL signaling on D0 and D3 and instead use CCL chemokines to migrate
+# Use SPOTlight data to check Neutrophil colocalization with CCL and CXCL chemokines at D0/3/9
+# Script developed by Robert Burns
+
+# Load SPOTlight output
+D0_young_spotlight <- readRDS("../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d0_young_spotlight.RDS")
+D0_aged_spotlight <- readRDS("../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d0_old_spotlight.RDS")
+D3_young_spotlight <- readRDS("../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d3_young_spotlight.RDS")
+D3_aged_spotlight <- readRDS("../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d3_old_spotlight.RDS")
+D9_young_spotlight <- readRDS("../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d9_young_spotlight.RDS")
+D9_aged_spotlight <- readRDS("../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d9_old_spotlight.RDS")
+
+# Add proportions of neutrophils in each spot to Seurat Visium meta.data
+Lung$Spotlight_Neutrophil_prop <- NA
+Lung@meta.data[which(Lung$orig.ident == "Day0_Young"), "Spotlight_Neutrophil_prop"] <- D0_young_spotlight[[2]][, c("Neutrophils")]
+Lung@meta.data[which(Lung$orig.ident == "Day0_Old"), "Spotlight_Neutrophil_prop"] <- D0_aged_spotlight[[2]][, c("Neutrophils")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Young"), "Spotlight_Neutrophil_prop"] <- D3_young_spotlight[[2]][, c("Neutrophils")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Old"), "Spotlight_Neutrophil_prop"] <- D3_aged_spotlight[[2]][, c("Neutrophils")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Young"), "Spotlight_Neutrophil_prop"] <- D9_young_spotlight[[2]][, c("Neutrophils")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Old"), "Spotlight_Neutrophil_prop"] <- D9_aged_spotlight[[2]][, c("Neutrophils")]
+# View(Lung@meta.data)
+
+# Plot chemokine gene expression vs neutrophil proportion of spot
+plot(x = filter(Lung@meta.data, !is.na(Lung$Spotlight_Neutrophil_prop))$Spotlight_Neutrophil_prop, y = Lung@assays$Spatial@data["Cxcl1", rownames(filter(Lung@meta.data, !is.na(Spotlight_Neutrophil_prop)))])
+
+plot(x = filter(Lung@meta.data, !is.na(Lung$Spotlight_Neutrophil_prop))$Spotlight_Neutrophil_prop, y = Lung@assays$Spatial@data["Cxcl2", rownames(filter(Lung@meta.data, !is.na(Spotlight_Neutrophil_prop)))])
+
+plot(x = filter(Lung@meta.data, !is.na(Lung$Spotlight_Neutrophil_prop))$Spotlight_Neutrophil_prop, y = Lung@assays$Spatial@data["Cxcl3", rownames(filter(Lung@meta.data, !is.na(Spotlight_Neutrophil_prop)))])
+
+plot(x = filter(Lung@meta.data, !is.na(Lung$Spotlight_Neutrophil_prop))$Spotlight_Neutrophil_prop, y = Lung@assays$Spatial@data["Cxcl12", rownames(filter(Lung@meta.data, !is.na(Spotlight_Neutrophil_prop)))])
+
+plot(x = filter(Lung@meta.data, !is.na(Lung$Spotlight_Neutrophil_prop))$Spotlight_Neutrophil_prop, y = Lung@assays$Spatial@data["Ccl3", rownames(filter(Lung@meta.data, !is.na(Spotlight_Neutrophil_prop)))])
+
+plot(x = filter(Lung@meta.data, !is.na(Lung$Spotlight_Neutrophil_prop))$Spotlight_Neutrophil_prop, y = Lung@assays$Spatial@data["Ccl5", rownames(filter(Lung@meta.data, !is.na(Spotlight_Neutrophil_prop)))])
+
+plot(x = filter(Lung@meta.data, !is.na(Lung$Spotlight_Neutrophil_prop))$Spotlight_Neutrophil_prop, y = Lung@assays$Spatial@data["Ccl6", rownames(filter(Lung@meta.data, !is.na(Spotlight_Neutrophil_prop)))])
+
+plot(x = filter(Lung@meta.data, !is.na(Lung$Spotlight_Neutrophil_prop))$Spotlight_Neutrophil_prop, y = Lung@assays$Spatial@data["Ccl7", rownames(filter(Lung@meta.data, !is.na(Spotlight_Neutrophil_prop)))])
+
+plot(x = filter(Lung@meta.data, !is.na(Lung$Spotlight_Neutrophil_prop))$Spotlight_Neutrophil_prop, y = Lung@assays$Spatial@data["Ccl8", rownames(filter(Lung@meta.data, !is.na(Spotlight_Neutrophil_prop)))])
+
+plot(x = filter(Lung@meta.data, !is.na(Lung$Spotlight_Neutrophil_prop))$Spotlight_Neutrophil_prop, y = Lung@assays$Spatial@data["Ccl9", rownames(filter(Lung@meta.data, !is.na(Spotlight_Neutrophil_prop)))])
+```
+
+```{r SPOTlight neutrophil cell colocaliation}
+D0_old_out <- readRDS("../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d0_old_out.RDS")
+D0_young_out <- readRDS("../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d0_young_out.RDS")
+D3_old_out <- readRDS("../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d3_old_out.RDS")
+D3_young_out <- readRDS("../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d3_young_out.RDS")
+D7_old_out <- readRDS("../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d7_old_out.RDS")
+D7_young_out <- readRDS("../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d7_young_out.RDS")
+D9_old_out <- readRDS("../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d9_old_out.RDS")
+D9_young_out <- readRDS("../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d9_young_out.RDS")
+
+
+D0_old_out$corrplot$data %>% dplyr::filter(signif == 1 & Var1 == "Neutrophils")
+D0_young_out$corrplot$data %>% dplyr::filter(signif == 1 & Var1 == "Neutrophils")
+D3_old_out$corrplot$data %>% dplyr::filter(signif == 1 & Var1 == "Neutrophils")
+D3_young_out$corrplot$data %>% dplyr::filter(signif == 1 & Var1 == "Neutrophils")
+D7_old_out$corrplot$data %>% dplyr::filter(signif == 1 & Var1 == "Neutrophils")
+D7_young_out$corrplot$data %>% dplyr::filter(signif == 1 & Var1 == "Neutrophils")
+D9_old_out$corrplot$data %>% dplyr::filter(signif == 1 & Var1 == "Neutrophils")
+D9_young_out$corrplot$data %>% dplyr::filter(signif == 1 & Var1 == "Neutrophils")
+
+
+Lung$spotlight_myofibro <- NA
+Lung@meta.data[which(Lung$orig.ident == "Day0_Young"), "spotlight_myofibro"] <- D0_young_spotlight[[2]][ , c("Myofibroblasts")]
+Lung@meta.data[which(Lung$orig.ident == "Day0_Aged"), "spotlight_myofibro"] <- D0_aged_spotlight[[2]][ , c("Myofibroblasts")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Young"), "spotlight_myofibro"] <- D3_young_spotlight[[2]][ , c("Myofibroblasts")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Aged"), "spotlight_myofibro"] <- D3_aged_spotlight[[2]][ , c("Myofibroblasts")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Young"), "spotlight_myofibro"] <- D9_young_spotlight[[2]][ , c("Myofibroblasts")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Aged"), "spotlight_myofibro"] <- D9_aged_spotlight[[2]][ , c("Myofibroblasts")]
+
+Lung$spotlight_AM <- NA
+Lung@meta.data[which(Lung$orig.ident == "Day0_Young"), "spotlight_AM"] <- D0_young_spotlight[[2]][ , c("Alveolar.macrophages")]
+Lung@meta.data[which(Lung$orig.ident == "Day0_Aged"), "spotlight_AM"] <- D0_aged_spotlight[[2]][ , c("Alveolar.macrophages")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Young"), "spotlight_AM"] <- D3_young_spotlight[[2]][ , c("Alveolar.macrophages")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Aged"), "spotlight_AM"] <- D3_aged_spotlight[[2]][ , c("Alveolar.macrophages")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Young"), "spotlight_AM"] <- D9_young_spotlight[[2]][ , c("Alveolar.macrophages")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Aged"), "spotlight_AM"] <- D9_aged_spotlight[[2]][ , c("Alveolar.macrophages")]
+
+
+```
+
+```{r Inflammation/fibrosis/apoptosis modules}
+# Visualize general inflammation and apoptosis
+
+Geneset_Inflammation <- readLines("Gene_sets/HALLMARK_INFLAMMATORY_RESPONSE.txt")[c(-1, -2)]
+Geneset_Inflammation <- paste0(
+ substring(Geneset_Inflammation, 1, 1),
+ tolower(substring(Geneset_Inflammation, 2)))
+Geneset_Inflammation <- Geneset_Inflammation[which(Geneset_Inflammation %in% rownames(Lung))]
+Geneset_Inflammation <- list(Geneset_Inflammation)
+Lung <- AddModuleScore(Lung, features = Geneset_Inflammation, name = "Geneset_Inflammation")
+
+Geneset_Apoptosis <- readLines("Gene_sets/HALLMARK_APOPTOSIS.txt")[c(-1, -2)]
+Geneset_Apoptosis <- paste0(
+ substring(Geneset_Apoptosis, 1, 1),
+ tolower(substring(Geneset_Apoptosis, 2)))
+Geneset_Apoptosis <- Geneset_Apoptosis[which(Geneset_Apoptosis %in% rownames(Lung))]
+Geneset_Apoptosis <- list(Geneset_Apoptosis)
+Lung <- AddModuleScore(Lung, features = Geneset_Apoptosis, name = "Geneset_Apoptosis")
+
+Geneset_Fibrosis <- readLines("Gene_sets/WP_LUNG_FIBROSIS.txt")[c(-1, -2)]
+Geneset_Fibrosis <- paste0(
+ substring(Geneset_Fibrosis, 1, 1),
+ tolower(substring(Geneset_Fibrosis, 2)))
+Geneset_Fibrosis <- Geneset_Fibrosis[which(Geneset_Fibrosis %in% rownames(Lung))]
+Geneset_Fibrosis <- list(Geneset_Fibrosis)
+Lung <- AddModuleScore(Lung, features = Geneset_Fibrosis, name = "Geneset_Fibrosis")
+
+
+
+p1 <- SpatialFeaturePlot(Lung, features = c("Geneset_Inflammation1"), images = c("Day.0.Young")) +
+  scale_fill_gradientn(limits = c(-0.13, 0.32), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p2 <- SpatialFeaturePlot(Lung, features = c("Geneset_Inflammation1"), images = c("Day.3.Young")) +
+  scale_fill_gradientn(limits = c(-0.13, 0.32), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p3 <- SpatialFeaturePlot(Lung, features = c("Geneset_Inflammation1"), images = c("Day.9.Young")) +
+  scale_fill_gradientn(limits = c(-0.13, 0.32), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p4 <- SpatialFeaturePlot(Lung, features = c("Geneset_Inflammation1"), images = c("Day.0.Aged")) +
+  scale_fill_gradientn(limits = c(-0.13, 0.32), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p5 <- SpatialFeaturePlot(Lung, features = c("Geneset_Inflammation1"), images = c("Day.3.Aged")) +
+  scale_fill_gradientn(limits = c(-0.13, 0.32), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p6 <- SpatialFeaturePlot(Lung, features = c("Geneset_Inflammation1"), images = c("Day.9.Aged")) +
+  scale_fill_gradientn(limits = c(-0.13, 0.32), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+plot_grid(p1, p2, p3, ncol = 3)
+# ggsave("Figures/05_Inflammation_Geneset_SpatialPlot_Young.png", bg = "white", height = 2.5)
+plot_grid(p4, p5, p6, ncol = 3)
+# ggsave("Figures/05_Inflammation_Geneset_SpatialPlot_Aged.png", bg = "white", height = 2.5)
+
+# Save legend separately
+as_ggplot(get_legend(SpatialFeaturePlot(Lung, features = c("Geneset_Inflammation1"), images = c("Day.0.Young")) +
+  scale_fill_gradientn(limits = c(-0.13, 0.32), colors = rev(brewer.pal(11, "Spectral"))) +
+    theme(legend.title = element_blank())))
+# ggsave("Figures/05_Inflammation_Geneset_SpatialPlot_Legend.pdf", bg = "transparent")
+
+
+VlnPlot(Lung,
+        features = c("Geneset_Inflammation1"),
+        pt.size = 0,
+        group.by = "orig.ident",
+        cols = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = 1, size = 1, linetype = "solid") +
+  stat_compare_means(
+    comparisons = list(
+      c("Day0_Young", "Day0_Aged"),
+      c("Day3_Young", "Day3_Aged"),
+      c("Day9_Young", "Day9_Aged")), label.y = c(0.15, 0.15, 0.35)) +
+  ylim(-0.15, 0.4) +
+  scale_x_discrete(labels = c("Day 0\nYoung", "Day 0\nAged", "Day 3\nYoung", "Day 3\nAged", "Day 9\nYoung", "Day 9\nAged")) +
+  theme(axis.title = element_blank(),
+        legend.position = "none",
+        axis.text.x = element_text(angle = 0, hjust = 0.5)) +
+  labs(title = "Inflammation gene set")
+# ggsave("Figures/05_Inflammation_Geneset_VlnPlot.pdf")
+
+
+p1 <- SpatialFeaturePlot(Lung, features = c("Geneset_Apoptosis1"), images = c("Day.0.Young")) +
+  scale_fill_gradientn(limits = c(-0.06, 0.37), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p2 <- SpatialFeaturePlot(Lung, features = c("Geneset_Apoptosis1"), images = c("Day.3.Young")) +
+  scale_fill_gradientn(limits = c(-0.06, 0.37), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p3 <- SpatialFeaturePlot(Lung, features = c("Geneset_Apoptosis1"), images = c("Day.9.Young")) +
+  scale_fill_gradientn(limits = c(-0.06, 0.37), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p4 <- SpatialFeaturePlot(Lung, features = c("Geneset_Apoptosis1"), images = c("Day.0.Aged")) +
+  scale_fill_gradientn(limits = c(-0.06, 0.37), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p5 <- SpatialFeaturePlot(Lung, features = c("Geneset_Apoptosis1"), images = c("Day.3.Aged")) +
+  scale_fill_gradientn(limits = c(-0.06, 0.37), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p6 <- SpatialFeaturePlot(Lung, features = c("Geneset_Apoptosis1"), images = c("Day.9.Aged")) +
+  scale_fill_gradientn(limits = c(-0.06, 0.37), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+plot_grid(p1, p2, p3, ncol = 3)
+# ggsave("Figures/05_Apoptosis_Geneset_SpatialPlot_Young.png", bg = "white", height = 2.5)
+plot_grid(p4, p5, p6, ncol = 3)
+# ggsave("Figures/05_Apoptosis_Geneset_SpatialPlot_Aged.png", bg = "white", height = 2.5)
+
+# Save legend separately
+as_ggplot(get_legend(SpatialFeaturePlot(Lung, features = c("Geneset_Apoptosis1"), images = c("Day.0.Young")) +
+  scale_fill_gradientn(limits = c(-0.06, 0.37), colors = rev(brewer.pal(11, "Spectral"))) +
+    theme(legend.title = element_blank())))
+# ggsave("Figures/05_Apoptosis_Geneset_SpatialPlot_Legend.pdf", bg = "transparent")
+
+
+VlnPlot(Lung,
+        features = c("Geneset_Apoptosis1"),
+        pt.size = 0,
+        group.by = "orig.ident",
+        cols = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = 1, size = 1, linetype = "solid") +
+  stat_compare_means(
+    comparisons = list(
+      c("Day0_Young", "Day0_Aged"),
+      c("Day3_Young", "Day3_Aged"),
+      c("Day9_Young", "Day9_Aged")), label.y = c(0.375, 0.375, 0.375)) +
+  ylim(-0.075, 0.425) +
+  scale_x_discrete(labels = c("Day 0\nYoung", "Day 0\nAged", "Day 3\nYoung", "Day 3\nAged", "Day 9\nYoung", "Day 9\nAged")) +
+  theme(axis.title = element_blank(),
+        legend.position = "none",
+        axis.text.x = element_text(angle = 0, hjust = 0.5)) +
+  labs(title = "Apoptosis gene set")
+# ggsave("Figures/05_Apoptosis_Geneset_VlnPlot.pdf")
+
+
+
+p1 <- SpatialFeaturePlot(Lung, features = c("Geneset_Fibrosis1"), images = c("Day.0.Young")) +
+  scale_fill_gradientn(limits = c(-0.17, 0.43), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p2 <- SpatialFeaturePlot(Lung, features = c("Geneset_Fibrosis1"), images = c("Day.3.Young")) +
+  scale_fill_gradientn(limits = c(-0.17, 0.43), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p3 <- SpatialFeaturePlot(Lung, features = c("Geneset_Fibrosis1"), images = c("Day.9.Young")) +
+  scale_fill_gradientn(limits = c(-0.17, 0.43), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p4 <- SpatialFeaturePlot(Lung, features = c("Geneset_Fibrosis1"), images = c("Day.0.Aged")) +
+  scale_fill_gradientn(limits = c(-0.17, 0.43), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p5 <- SpatialFeaturePlot(Lung, features = c("Geneset_Fibrosis1"), images = c("Day.3.Aged")) +
+  scale_fill_gradientn(limits = c(-0.17, 0.43), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p6 <- SpatialFeaturePlot(Lung, features = c("Geneset_Fibrosis1"), images = c("Day.9.Aged")) +
+  scale_fill_gradientn(limits = c(-0.17, 0.43), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+plot_grid(p1, p2, p3, ncol = 3)
+# ggsave("Figures/05_Fibrosis_Geneset_SpatialPlot_Young.png", bg = "white", height = 2.5)
+plot_grid(p4, p5, p6, ncol = 3)
+# ggsave("Figures/05_Fibrosis_Geneset_SpatialPlot_Aged.png", bg = "white", height = 2.5)
+
+# Save legend separately
+as_ggplot(get_legend(SpatialFeaturePlot(Lung, features = c("Geneset_Fibrosis1"), images = c("Day.0.Young")) +
+  scale_fill_gradientn(limits = c(-0.17, 0.43), colors = rev(brewer.pal(11, "Spectral"))) +
+    theme(legend.title = element_blank())))
+# ggsave("Figures/05_Fibrosis_Geneset_SpatialPlot_Legend.pdf", bg = "transparent")
+
+
+VlnPlot(Lung,
+        features = c("Geneset_Fibrosis1"),
+        pt.size = 0,
+        group.by = "orig.ident",
+        cols = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = 1, size = 1, linetype = "solid") +
+  stat_compare_means(
+    comparisons = list(
+      c("Day0_Young", "Day0_Aged"),
+      c("Day3_Young", "Day3_Aged"),
+      c("Day9_Young", "Day9_Aged")), label.y = c(0.35, 0.35, 0.45)) +
+  ylim(-0.2, 0.5) +
+  scale_x_discrete(labels = c("Day 0\nYoung", "Day 0\nAged", "Day 3\nYoung", "Day 3\nAged", "Day 9\nYoung", "Day 9\nAged")) +
+  theme(axis.title = element_blank(),
+        legend.position = "none",
+        axis.text.x = element_text(angle = 0, hjust = 0.5)) +
+  labs(title = "Fibrosis gene set")
+# ggsave("Figures/05_Fibrosis_Geneset_VlnPlot.pdf")
+
+
+### Correlation between inflammation and fibrosis on Day 9?
+summary(lm(
+  formula = Geneset_Fibrosis1 ~ Geneset_Inflammation1,
+  data = Lung@meta.data %>% filter(orig.ident == "Day9_Young")))
+# Adjusted R-squared: 0.002856; p-value: 0.002508
+
+summary(lm(
+  formula = Geneset_Fibrosis1 ~ Geneset_Inflammation1,
+  data = Lung@meta.data %>% filter(orig.ident == "Day9_Aged")))#$coefficients["Geneset_Inflammation1", "Pr(>|t|)"]
+# Adjusted R-squared: 0.2109; p-value: 4.595007e-155
+
+Lung@meta.data %>% 
+  filter(orig.ident == "Day9_Young") %>%
+  ggplot(aes(x = Geneset_Inflammation1, y = Geneset_Fibrosis1, color = seurat_clusters)) +
+  geom_point() +
+  geom_smooth(formula = y ~ x, se = F, color = "darkgreen") +
+  xlab("Inflammation geneset score") +
+  ylab("Fibrosis geneset score") +
+  theme_minimal() +
+  annotate(
+    geom = "text",
+    x = -0.05,
+    y = -0.13,
+    label = expression("R" ^ "2" ~ "= 0.003"),
+    size = 4,
+    color = "darkgreen") +
+  annotate(
+    geom = "text",
+    x = -0.05,
+    y = -0.17,
+    label = expression(italic("p") ~ "= 0.003"),
+    size = 4,
+    color = "darkgreen") +
+  labs(color = "Seurat cluster")
+
+Lung@meta.data %>% 
+  filter(orig.ident == "Day9_Aged") %>%
+  ggplot(aes(x = Geneset_Inflammation1, y = Geneset_Fibrosis1, color = seurat_clusters)) +
+  geom_point() +
+  geom_smooth(formula = y ~ x, se = F, color = "gray20") +
+  xlab("Inflammation geneset score") +
+  ylab("Fibrosis geneset score") +
+  theme_minimal() +
+  annotate(
+    geom = "text",
+    x = 0.25,
+    y = 0.02,
+    label = expression("R" ^ "2" ~ "= 0.21"),
+    size = 4,
+    color = "gray20") +
+  annotate(
+    geom = "text",
+    x = 0.25,
+    y = -0.02,
+    label = expression(italic("p") ~ "= 4.6 x 10" ^ "-155"),
+    size = 4,
+    color = "gray20") +
+  labs(color = "Seurat cluster")
+
+
+Lung@meta.data %>% 
+  filter(orig.ident %in% c("Day9_Young", "Day9_Aged")) %>%
+  ggplot(aes(x = Geneset_Inflammation1, y = Geneset_Fibrosis1, color = orig.ident)) +
+  geom_point(size = 0.5) +
+  geom_smooth(aes(group = orig.ident, color = orig.ident), formula = y ~ x, se = F, size = 1.25) +
+  xlab("Inflammation gene set score") +
+  ylab("Fibrosis gene set score") +
+  theme_minimal() +
+  scale_color_manual(name = "Sample",values = c("darkgreen", "gray20"), labels = c("Day 9 Young", "Day 9 Aged")) +
+  annotate(
+    geom = "text",
+    x = 0.25,
+    y = 0.015,
+    label = expression("R" ^ "2" ~ "= 0.003"),
+    size = 4,
+    color = "darkgreen") +
+  annotate(
+    geom = "text",
+    x = 0.25,
+    y = -0.015,
+    label = expression(italic("p") ~ "= 0.003"),
+    size = 4,
+    color = "darkgreen") +
+  annotate(
+    geom = "text",
+    x = 0.25,
+    y = -0.085,
+    label = expression("R" ^ "2" ~ "= 0.21"),
+    size = 4,
+    color = "gray20") +
+  annotate(
+    geom = "text",
+    x = 0.25,
+    y = -0.115,
+    label = expression(italic("p") ~ "= 4.6 x 10" ^ "-155"),
+    size = 4,
+    color = "gray20")
+# ggsave("Figures/05_Inflammation_Fibrosis_Geneset_Regression.pdf")
+```
+
+```{r Inflammmation/fibrosis DEGs}
+# In D9 Aged Visium, compare gene expression in spots with inflammation and fibrosis vs spots with inflammation but no fibrosis (use mean values of inflammation and fibrosis modules as cutoffs for positive and negative)
+
+Lung@meta.data %>% 
+  dplyr::filter(orig.ident == "Day9_Aged") %>%
+  pull(Geneset_Inflammation1) %>% 
+  mean() # 0.08107762
+
+Lung@meta.data %>% 
+  dplyr::filter(orig.ident == "Day9_Aged") %>%
+  pull(Geneset_Fibrosis1) %>% 
+  mean() # 0.1247514
+
+# TRUE = inflam+, fibr+; FALSE = inflam+, fibr-
+Lung$D9Aged_Inflam_Fibrosis <- NA
+
+Lung$D9Aged_Inflam_Fibrosis[which(Lung$orig.ident == "Day9_Aged")] <- "Uninflamed"
+
+Lung$D9Aged_Inflam_Fibrosis[which(Lung$orig.ident == "Day9_Aged" & Lung$Geneset_Inflammation1 > 0.08107762 & Lung$Geneset_Fibrosis1 > 0.1247514)] <- "Inflamed fibrotic"
+
+Lung$D9Aged_Inflam_Fibrosis[which(Lung$orig.ident == "Day9_Aged" & Lung$Geneset_Inflammation1 > 0.08107762 & Lung$Geneset_Fibrosis1 < 0.1247514)] <- "Inflamed nonfibrotic"
+
+# Lung$D9Aged_Inflam_Fibrosis[which(Lung$orig.ident == "Day9_Aged" & Lung$Geneset_Inflammation1 < 0.08107762 & Lung$Geneset_Fibrosis1 > 0.1247514)] <- "Uninflamed fibrotic"
+# 
+# Lung$D9Aged_Inflam_Fibrosis[which(Lung$orig.ident == "Day9_Aged" & Lung$Geneset_Inflammation1 < 0.08107762 & Lung$Geneset_Fibrosis1 < 0.1247514)] <- "Uninflamed nonfibrotic"
+
+
+SpatialDimPlot(Lung, images = "Day.9.Aged", group.by = "D9Aged_Inflam_Fibrosis") +
+  scale_fill_manual(name = "Day 9 Aged", values = c("firebrick3", "dodgerblue3", "gray"))
+  # scale_fill_manual(name = "Day 9 Aged", values = c("firebrick4", "tomato", "steelblue4", "lightblue1"))
+# ggsave("Figures/08_D9_Aged_Inflammation_Fibrosis_DimPlot.png", width = 5, height = 3)
+
+# Lung$D9Aged_Inflam_Fibrosis <- factor(Lung$D9Aged_Inflam_Fibrosis)
+# Lung@active.ident <- Lung$D9Aged_Inflam_Fibrosis
+# D9Aged_Inflam_Fibrosis_DEGs <- FindAllMarkers(subset(Lung, cells = rownames(Lung@meta.data[which(!is.na(Lung$D9Aged_Inflam_Fibrosis)), ])), only.pos = T) # Exclude NA cells
+# Lung@active.ident <- Lung$Cluster_names
+
+D9Aged_Inflam_Fibrosis_DEGs %>% dplyr::group_by(cluster) %>% top_n(40, wt = avg_log2FC)
+
+
+# D9Aged_Inflam_Fibrosis_InflOnly_DEGs <- FindMarkers(Lung, group.by = "D9Aged_Inflam_Fibrosis", ident.1 = "Inflamed fibrotic", ident.2 = "Inflamed nonfibrotic")
+
+
+DotPlot(subset(Lung, D9Aged_Inflam_Fibrosis %in% c("Inflamed fibrotic", "Inflamed nonfibrotic", "Uninflamed")),
+        features = c("Il1b", "Isg15", "Gzmb", "Cd8a", "Arg1", "Tgfb1", "Wfdc17", "Prss23", "Ehd2", "Hpgd", "Calcrl", "Cav1", "Cavin2", "Wfdc2"),
+        group.by = "D9Aged_Inflam_Fibrosis") +
+  labs(title = "Day 9 Aged") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+# ggsave("Figures/08_D9_Aged_Inflammation_Fibrosis_DEG_DotPlot.pdf", width = 7, height = 4)
+
+# Prss23 and Prss35 expression by fibroblasts in kidney cells in vitro shown to reduce fibrosis, but is inhibited by HE4 (encoded by Wfdc2) (10.1038/nm.2989)
+  # WAP proteins bind non-covalently to the catalytic cleft of the protease like a substrate, thus inhibiting substrate binding (10.1515/hsz-2016-0262)
+# Hpgd breaks down prostaglandins; PGE2 may inhibit fibrosis by inhibiting TGFb; Hpgd has previously been shown to be profibrotic in idiopathic pulmonary fibrosis (10.1038/s41598-020-68336-0, 10.1016/j.jaci.2019.11.032), but we see the opposite here; impact of PGE2 on influenza immunity may be variable (10.1016/j.pharmthera.2017.12.008)
+# Calcrl (encodes calcitonin receptor like-receptor, CRLR) mediates adrenomedullin signaling, which has been found to reduce bleomycin-induced lung fibrosis (10.1186/1465-9921-12-41)
+# Cav1 (caveolin 1) - Inhibits inflammasome activation to prevent pulmonary fibrosis in IPF (10.1038/s41598-019-55819-y, 10.1084/jem.20061536)
+# Ehd2 - mechanotransducing ATPase localized in caveolae invaginations at the plasma membrane, biomarker of cancer control and mets-free survival in triple negative breast cancer (10.1038/s41598-020-65054-5)
+
+
+VlnPlot(subset(Lung, D9Aged_Inflam_Fibrosis %in% c("Inflamed fibrotic", "Inflamed nonfibrotic", "Uninflamed")),
+        features = c("Wfdc2"),
+        pt.size = 0)
+
+VlnPlot(subset(Lung, D9Aged_Inflam_Fibrosis %in% c("Inflamed fibrotic", "Inflamed nonfibrotic", "Uninflamed")),
+        features = c("Wfdc2"),
+        pt.size = 0,
+        group.by = "D9Aged_Inflam_Fibrosis") +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = 1, size = 1, linetype = "solid")
+
+VlnPlot(subset(Lung, D9Aged_Inflam_Fibrosis %in% c("Inflamed fibrotic", "Inflamed nonfibrotic")),
+        features = c("Isg15"),
+        pt.size = 0,
+        group.by = "D9Aged_Inflam_Fibrosis") +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = 1, size = 1, linetype = "solid")
+
+VlnPlot(subset(Lung, D9Aged_Inflam_Fibrosis %in% c("Inflamed fibrotic", "Inflamed nonfibrotic", "Uninflamed")),
+        features = c("Hpgd"),
+        pt.size = 0,
+        group.by = "D9Aged_Inflam_Fibrosis") +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = 1, size = 1, linetype = "solid")
+
+VlnPlot(subset(Lung, D9Aged_Inflam_Fibrosis %in% c("Inflamed fibrotic", "Inflamed nonfibrotic", "Uninflamed")),
+        features = c("Calcrl"),
+        pt.size = 0,
+        group.by = "D9Aged_Inflam_Fibrosis") +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = 1, size = 1, linetype = "solid")
+
+VlnPlot(subset(Lung, D9Aged_Inflam_Fibrosis %in% c("Inflamed fibrotic", "Inflamed nonfibrotic", "Uninflamed")),
+        features = c("Ehd2"),
+        pt.size = 0,
+        group.by = "D9Aged_Inflam_Fibrosis") +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = 1, size = 1, linetype = "solid") +
+  stat_compare_means(comparisons = list(
+    c("Inflamed fibrotic", "Inflamed nonfibrotic"),
+    c("Uninflamed", "Inflamed nonfibrotic"),
+    c("Uninflamed", "Inflamed fibrotic"))) +
+  ylim(-0.05, 6)
+```
+
+```{r Inflammation/fibrosis cells}
+# Use SPOTlight data to find which cells are predicted to be in inflamed fibrotic areas
+### XYZ compare between young and aged Day 9?
+
+head(D9_aged_spotlight[[1]])
+
+which(Lung$D9Aged_Inflam_Fibrosis == "Inflamed fibrotic") %>% head()
+# Need to subtract rows to match row numbers between meta data and spotlight object
+which(Lung$orig.ident == "Day9_Aged") %>% head() # First D9_Aged is row 12058, so subtract 12057 from all values
+
+head(which(Lung$D9Aged_Inflam_Fibrosis == "Inflamed fibrotic") - 12057)
+
+# Inflamed fibrotic (IF)
+D9Aged_Inf_Fib_cells_IF <- D9_aged_spotlight[[2]][(which(Lung$D9Aged_Inflam_Fibrosis == "Inflamed fibrotic") - 12057), -36]
+D9Aged_Inf_Fib_cells_IF_avg <- D9Aged_Inf_Fib_cells_IF %>% colMeans()
+
+# Inflamed nonfibrotic (INF)
+D9Aged_Inf_Fib_cells_INF <- D9_aged_spotlight[[2]][(which(Lung$D9Aged_Inflam_Fibrosis == "Inflamed nonfibrotic") - 12057), -36]
+D9Aged_Inf_Fib_cells_INF_avg <- D9Aged_Inf_Fib_cells_INF %>% colMeans()
+
+# Uninflamed (Un)
+D9Aged_Inf_Fib_cells_Un <- D9_aged_spotlight[[2]][(which(Lung$D9Aged_Inflam_Fibrosis == "Uninflamed") - 12057), -36]
+D9Aged_Inf_Fib_cells_Un_avg <- D9Aged_Inf_Fib_cells_Un %>% colMeans()
+
+D9Aged_Inf_Fib_cells_All_avg <- data.frame(
+  Inflamed_fibrotic = D9Aged_Inf_Fib_cells_IF_avg,
+  Inflamed_nonfibrotic = D9Aged_Inf_Fib_cells_INF_avg,
+  Uninflamed = D9Aged_Inf_Fib_cells_Un_avg)
+
+Flu_noRBC <- subset(Flu_pure, idents = c("RBC"), invert =T)
+Flu_noRBC$Named_clusters <- Flu_noRBC@active.ident
+
+# Find which condition has the highest frequency of each cell type
+D9Aged_Inf_Fib_cells_All_max <- data.frame(
+  Cell_type = sort(unique(as.character(Flu_noRBC$Named_clusters))),
+  Condition_max = colnames(D9Aged_Inf_Fib_cells_All_avg)[apply(D9Aged_Inf_Fib_cells_All_avg, 1, which.max)]
+)
+
+# Using Polychrome package to generate colors
+lisa::artwork
+colors_35 <- createPalette(35, seedcolors = lisa::lisa_palette("EdvardMunch_1", 5)) %>% as.character()
+
+t1<-D9Aged_Inf_Fib_cells_All_avg[-33,]
+
+t1 %>% 
+  mutate(Cluster = sort(unique(as.character(Flu_noRBC$Named_clusters)))) %>%
+  pivot_longer(cols = -c(Cluster), names_to = "Condition", values_to = "Freq") %>% 
+  mutate(Condition = gsub("_", " ", x = Condition)) %>% 
+  ggplot(aes(x = Condition, y = Freq, fill = Cluster)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal() +
+  scale_y_continuous(labels = scales::percent_format()) +
+  ylab("Average capture spot composition") +
+  xlab("Day 9 Aged") + 
+  theme(panel.grid.major.x = element_blank()) +
+  scale_fill_manual(values = colors_35)
+ggsave("Figures_RJB/08_D9_Aged_Inflammation_Fibrosis_Cells_Barplot.pdf", width = 10, height = 5)
+
+# https://stackoverflow.com/questions/45429182/assigning-alpha-values-to-ggplot
+D9Aged_Inf_Fib_cells_All_avg %>% 
+  mutate(Condition_max = c("Inflamed_fibrotic", "Inflamed_nonfibrotic", "Uninflamed")[apply(D9Aged_Inf_Fib_cells_All_avg, 1, which.max)]) %>% # Use for variable alpha later
+  mutate(Cluster = sort(unique(as.character(Flu_pure$Named_clusters)))) %>%
+  pivot_longer(cols = -c(Cluster, Condition_max), names_to = "Condition", values_to = "Freq") %>% 
+  mutate(Condition_alpha = (Condition == Condition_max)) %>%
+  mutate(Condition_alpha = gsub(FALSE, 0.25, Condition_alpha)) %>% 
+  mutate(Condition_alpha = gsub(TRUE, 1, Condition_alpha)) %>%
+  mutate(Condition_alpha = as.numeric(Condition_alpha)) %>%
+  mutate(Condition = gsub("_", " ", x = Condition)) %>%
+  ggplot(aes(x = Condition, y = Freq, fill = Cluster)) +
+  geom_bar(stat = "identity", position = "stack", aes(alpha = Condition_alpha)) +
+  theme_minimal() +
+  scale_alpha_identity() +
+  scale_y_continuous(labels = scales::percent_format()) +
+  ylab("Average capture spot composition") +
+  xlab("Day 9 Aged") + 
+  theme(panel.grid.major.x = element_blank()) +
+  scale_fill_manual(values = colors_35)
+ggsave("Figures_RJB/08_D9_Aged_Inflammation_Fibrosis_Cells_Barplot_transparent.pdf", width = 10, height = 5)
+```
+
+```{r Wound healing module}
+Geneset_wound_healing <- read_excel("../../../MYK065_scRNAseq_D3/Analysis/Gene_sets/GO_0042060_wound_healing.xlsx") %>% pull(Symbol)
+# Already in mouse gene format
+Geneset_wound_healing <- Geneset_wound_healing[which(Geneset_wound_healing %in% rownames(Lung))]
+Geneset_wound_healing <- list(Geneset_wound_healing)
+Lung <- AddModuleScore(Lung, features = Geneset_wound_healing, name = "Geneset_wound_healing")
+
+VlnPlot(Lung,
+        features = c("Geneset_wound_healing1"),
+        pt.size = 0,
+        group.by = "orig.ident",
+        cols = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = 1, size = 1, linetype = "solid") +
+  stat_compare_means(
+    comparisons = list(
+      c("Day0_Young", "Day0_Aged"),
+      c("Day3_Young", "Day3_Aged"),
+      c("Day9_Young", "Day9_Aged")),
+    label.y = c(0.275, 0.275, 0.275)) +
+  ylim(-0.05, 0.325) +
+  scale_x_discrete(labels = c("Day 0\nYoung", "Day 0\nAged", "Day 3\nYoung", "Day 3\nAged", "Day 9\n Young", "Day 9\nAged")) +
+  theme(axis.title = element_blank(),
+        legend.position = "none",
+        axis.text.x = element_text(angle = 0, hjust = 0.5)) +
+  labs(title = "GO wound healing geneset")
+
+SpatialFeaturePlot(Lung, features = c("Geneset_wound_healing1"), images = c("Day.9.Young")) +
+  scale_fill_gradientn(limits = c(-0.03, 0.27), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+SpatialFeaturePlot(Lung, features = c("Geneset_wound_healing1"), images = c("Day.9.Aged")) +
+  scale_fill_gradientn(limits = c(-0.03, 0.27), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+
+Lung@meta.data %>% 
+  #filter(orig.ident %in% c("Day9_Young", "Day9_Aged")) %>%
+  ggplot(aes(x = Geneset_Inflammation1, y = Geneset_wound_healing1, color = orig.ident)) +
+  geom_point(size = 0.5) +
+  geom_smooth(aes(group = orig.ident, color = orig.ident), formula = y ~ x, se = F, size = 1.25) +
+  xlab("Inflammation geneset score") +
+  ylab("Wound healing geneset score") +
+  theme_minimal() #+
+  # scale_color_manual(name = "Sample",values = c("darkgreen", "gray20"), labels = c("Day 9 Young", "Day 9 Aged"))
+
+# Geneset is huge (> 600 genes), so I don't think this is accurate. Probably overcounting where wound healing actually occurs.
+```
+
+```{r Reactive oxygen species module}
+Geneset_ROS <- readLines("../../../MYK065_scRNAseq_D3/Analysis/Gene_sets/HALLMARK_REACTIVE_OXYGEN_SPECIES_PATHWAY.txt")[c(-1, -2)]
+Geneset_ROS <- paste0(
+ substring(Geneset_ROS, 1, 1),
+ tolower(substring(Geneset_ROS, 2)))
+Geneset_ROS <- Geneset_ROS[which(Geneset_ROS %in% rownames(Lung))]
+Geneset_ROS <- list(Geneset_ROS)
+Lung <- AddModuleScore(Lung, features = Geneset_ROS, name = "Geneset_ROS")
+
+SpatialFeaturePlot(Lung, features = c("Geneset_ROS1"), images = c("Day.0.Young")) +
+  scale_fill_gradientn(limits = c(-0.24, 0.45), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+SpatialFeaturePlot(Lung, features = c("Geneset_ROS1"), images = c("Day.0.Aged")) +
+  scale_fill_gradientn(limits = c(-0.24, 0.45), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+SpatialFeaturePlot(Lung, features = c("Geneset_ROS1"), images = c("Day.3.Young")) +
+  scale_fill_gradientn(limits = c(-0.24, 0.45), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+SpatialFeaturePlot(Lung, features = c("Geneset_ROS1"), images = c("Day.3.Aged")) +
+  scale_fill_gradientn(limits = c(-0.24, 0.45), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+SpatialFeaturePlot(Lung, features = c("Geneset_ROS1"), images = c("Day.9.Young")) +
+  scale_fill_gradientn(limits = c(-0.24, 0.45), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+SpatialFeaturePlot(Lung, features = c("Geneset_ROS1"), images = c("Day.9.Aged")) +
+  scale_fill_gradientn(limits = c(-0.24, 0.45), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+
+VlnPlot(Lung,
+        features = c("Geneset_ROS1"),
+        pt.size = 0,
+        group.by = "orig.ident",
+        cols = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = 1, size = 1, linetype = "solid") +
+  stat_compare_means(
+    comparisons = list(
+      c("Day0_Young", "Day0_Aged"),
+      c("Day3_Young", "Day3_Aged"),
+      c("Day9_Young", "Day9_Aged")),
+    label.y = c(0.475, 0.475, 0.475)) +
+  ylim(-0.25, 0.525) +
+  scale_x_discrete(labels = c("Day 0\nYoung", "Day 0\nAged", "Day 3\nYoung", "Day 3\nAged", "Day 9\n Young", "Day 9\nAged")) +
+  theme(axis.title = element_blank(),
+        legend.position = "none",
+        axis.text.x = element_text(angle = 0, hjust = 0.5)) +
+  labs(title = "Hallmark ROS geneset")
+# ggsave("Figures/06_ROS_Geneset_VlnPlot.pdf")
+```
+
+```{r Neutrophil CXCL colocalization}
+# Cellchat predicts that neutrophils in aged mice on Day 3 undergo less CXCL signaling compared to young
+# Look for colocalization differences on Day 3 between CXCL chemokines and neutrophil location from SPOTlight
+
+D0_young_spotlight <- readRDS(file = "../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d0_young_spotlight.RDS")
+D0_aged_spotlight <- readRDS(file = "../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d0_old_spotlight.RDS")
+D3_young_spotlight <- readRDS(file = "../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d3_young_spotlight.RDS")
+D3_aged_spotlight <- readRDS(file = "../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d3_old_spotlight.RDS")
+D9_young_spotlight <- readRDS(file = "../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d9_young_spotlight.RDS")
+D9_aged_spotlight <- readRDS(file = "../SPOTlight_four_timepoints/SPOTlight_plots_RJB/d9_old_spotlight.RDS")
+
+# Second element of the spotlight list is the proportion of each cell type.
+head(D3_young_spotlight[[2]])
+head(D3_aged_spotlight[[2]])
+# Add proportions of neutrophils to meta data
+Lung$spotlight_neutrophils <- NA
+
+Lung@meta.data[which(Lung$orig.ident == "Day0_Young"), "spotlight_neutrophils"] <- D0_young_spotlight[[2]][ , c("Neutrophils")]
+Lung@meta.data[which(Lung$orig.ident == "Day0_Aged"), "spotlight_neutrophils"] <- D0_aged_spotlight[[2]][ , c("Neutrophils")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Young"), "spotlight_neutrophils"] <- D3_young_spotlight[[2]][ , c("Neutrophils")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Aged"), "spotlight_neutrophils"] <- D3_aged_spotlight[[2]][ , c("Neutrophils")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Young"), "spotlight_neutrophils"] <- D9_young_spotlight[[2]][ , c("Neutrophils")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Aged"), "spotlight_neutrophils"] <- D9_aged_spotlight[[2]][ , c("Neutrophils")]
+
+
+
+DotPlot(Lung, features = c("Cxcl1", "Cxcl2", "Cxcl5", "Cxcl12"), group.by = "orig.ident")
+
+CXCL_D3_Young <- data.frame(
+  "Cxcl1" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Cxcl1",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Young")]])),
+  "Cxcl2" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Cxcl2",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Young")]])),
+  "Cxcl5" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Cxcl5",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Young")]])),
+  "Cxcl12" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Cxcl12",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Young")]])),
+  "Neutro_pct" = Lung$spotlight_neutrophils[which(Lung$orig.ident == "Day3_Young")] * 100
+)
+
+summary(glm(Cxcl1 ~ Neutro_pct, data = CXCL_D3_Young, family = binomial))
+summary(glm(Cxcl2 ~ Neutro_pct, data = CXCL_D3_Young, family = binomial))
+summary(glm(Cxcl5 ~ Neutro_pct, data = CXCL_D3_Young, family = binomial))
+summary(glm(Cxcl12 ~ Neutro_pct, data = CXCL_D3_Young, family = binomial))
+
+CXCL_D3_Aged <- data.frame(
+  "Cxcl1" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Cxcl1",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Aged")]])),
+  "Cxcl2" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Cxcl2",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Aged")]])),
+  "Cxcl5" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Cxcl5",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Aged")]])),
+  "Cxcl12" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Cxcl12",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Aged")]])),
+  "Neutro_pct" = Lung$spotlight_neutrophils[which(Lung$orig.ident == "Day3_Aged")] * 100
+)
+
+summary(glm(Cxcl1 ~ Neutro_pct, data = CXCL_D3_Aged, family = binomial))
+summary(glm(Cxcl2 ~ Neutro_pct, data = CXCL_D3_Aged, family = binomial)) # p = 0.0562
+summary(glm(Cxcl5 ~ Neutro_pct, data = CXCL_D3_Aged, family = binomial))
+summary(glm(Cxcl12 ~ Neutro_pct, data = CXCL_D3_Aged, family = binomial)) # p = 5.23e-07 but negative correlation
+
+CXCL_D3_Aged %>% 
+  ggplot(aes(x = Neutro_pct, y = as.logical(Cxcl2))) + 
+  geom_point() +
+  stat_smooth(method = "glm", se = FALSE, method.args = list(family = binomial), col = "gray50")
+```
+
+```{r Neutrophil CCL colocalization}
+DotPlot(Lung, features = c("Ccl3", "Ccl5", "Ccl6", "Ccl8", "Ccl9"), group.by = "orig.ident")
+
+CCL_D3_Young <- data.frame(
+  "Ccl3" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Ccl3",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Young")]])),
+  "Ccl5" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Ccl5",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Young")]])),
+  "Ccl6" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Ccl6",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Young")]])),
+  "Ccl8" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Ccl8",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Young")]])),
+  "Ccl9" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Ccl9",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Young")]])),
+  "Neutro_pct" = Lung$spotlight_neutrophils[which(Lung$orig.ident == "Day3_Young")] * 100
+)
+
+summary(glm(Ccl3 ~ Neutro_pct, data = CCL_D3_Young, family = binomial))
+summary(glm(Ccl5 ~ Neutro_pct, data = CCL_D3_Young, family = binomial))
+summary(glm(Ccl6 ~ Neutro_pct, data = CCL_D3_Young, family = binomial))
+summary(glm(Ccl8 ~ Neutro_pct, data = CCL_D3_Young, family = binomial))
+summary(glm(Ccl9 ~ Neutro_pct, data = CCL_D3_Young, family = binomial))
+# Not significant or correlated negatively
+
+CCL_D3_Aged <- data.frame(
+  "Ccl3" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Ccl3",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Aged")]])),
+  "Ccl5" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Ccl5",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Aged")]])),
+  "Ccl6" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Ccl6",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Aged")]])),
+  "Ccl8" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Ccl8",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Aged")]])),
+  "Ccl9" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Ccl9",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day3_Aged")]])),
+  "Neutro_pct" = Lung$spotlight_neutrophils[which(Lung$orig.ident == "Day3_Aged")] * 100
+)
+
+summary(glm(Ccl3 ~ Neutro_pct, data = CCL_D3_Aged, family = binomial))
+summary(glm(Ccl5 ~ Neutro_pct, data = CCL_D3_Aged, family = binomial))
+summary(glm(Ccl6 ~ Neutro_pct, data = CCL_D3_Aged, family = binomial))
+summary(glm(Ccl8 ~ Neutro_pct, data = CCL_D3_Aged, family = binomial))
+summary(glm(Ccl9 ~ Neutro_pct, data = CCL_D3_Aged, family = binomial))
+# Not significant or correlated negatively
+```
+
+```{r Neutrophil/module score colocalization}
+# Logistic regression - Neutrophil presence vs ROS score from Visium clusters
+Lung@meta.data %>% 
+  mutate(is_Neutro = as.numeric(Cluster_names == "Neutrophils")) %>%
+  dplyr::filter(orig.ident == "Day0_Aged") %>% 
+  glm(is_Neutro ~ Geneset_ROS1, family = "binomial", data = .) %>%
+  summary()
+# Only significant for Day 0 Aged (p = 0.00862)
+
+### Check for colocalization with Neutrophils from SPOTlight
+summary(lm(
+  formula = Geneset_ROS1 ~ spotlight_neutrophils,
+  data = Lung@meta.data %>% filter(orig.ident == "Day9_Young")))
+# Adjusted R-squared: 0.00237; p-value: 0.005377
+summary(lm(
+  formula = Geneset_ROS1 ~ spotlight_neutrophils,
+  data = Lung@meta.data %>% filter(orig.ident == "Day9_Aged")))
+# Adjusted R-squared: 0.0002579; p-value: 0.184
+
+
+### Inflammation on Day 3
+summary(lm(
+  formula = Geneset_Inflammation1 ~ spotlight_neutrophils,
+  data = Lung@meta.data %>% filter(orig.ident == "Day3_Young")))
+# Adjusted R-squared: 0.0102; p-value: 2.694e-07
+summary(lm(
+  formula = Geneset_Inflammation1 ~ spotlight_neutrophils,
+  data = Lung@meta.data %>% filter(orig.ident == "Day3_Aged")))#$coefficients["spotlight_neutrophils", "Pr(>|t|)"]
+# Adjusted R-squared: 0.003186; p-value: 0.002652
+
+
+### Inflammation on Day 9
+summary(lm(
+  formula = Geneset_Inflammation1 ~ spotlight_neutrophils,
+  data = Lung@meta.data %>% filter(orig.ident == "Day9_Young")))
+# Adjusted R-squared: 6.273e-06; p-value: 0.3131
+summary(lm(
+  formula = Geneset_Inflammation1 ~ spotlight_neutrophils,
+  data = Lung@meta.data %>% filter(orig.ident == "Day9_Aged")))#$coefficients["spotlight_neutrophils", "Pr(>|t|)"]
+# Adjusted R-squared: 0.07442; p-value: 4.882859e-52
+
+### What if we only look at spots with neutrophils? (to exclude possibility that background inflammation in Aged is skewing data)
+summary(lm(
+  formula = Geneset_Inflammation1 ~ spotlight_neutrophils,
+  data = Lung@meta.data %>% filter(orig.ident == "Day9_Young", spotlight_neutrophils > 0)))
+# Adjusted R-squared: -0.0004549; p-value: 0.5109
+summary(lm(
+  formula = Geneset_Inflammation1 ~ spotlight_neutrophils,
+  data = Lung@meta.data %>% filter(orig.ident == "Day9_Aged", spotlight_neutrophils > 0)))#$coefficients["spotlight_neutrophils", "Pr(>|t|)"]
+# Adjusted R-squared: 0.1501; p-value: 2.375738e-52
+
+# Day 3
+Lung@meta.data %>% 
+  filter(orig.ident %in% c("Day3_Young", "Day3_Aged")) %>%
+  ggplot(aes(x = spotlight_neutrophils, y = Geneset_Inflammation1, color = orig.ident)) +
+  geom_point(size = 0.3) +
+  geom_smooth(aes(group = orig.ident, color = orig.ident), formula = y ~ x, se = F, size = 1.25) +
+  xlab("Neutrophil proportion of sequenced spot") +
+  ylab("Inflammation geneset score") +
+  theme_minimal() +
+  scale_color_manual(name = "Sample", values = c("palegreen3", "gray50"), labels = c("Day 3 Young", "Day 3 Aged")) +
+  scale_x_continuous(labels = scales::percent_format()) +
+  annotate(
+    geom = "text",
+    x = 0.175,
+    y = -0.05 + 0.01,
+    label = expression("R" ^ "2" ~ "= 0.01"),
+    size = 4,
+    color = "palegreen3") +
+  annotate(
+    geom = "text",
+    x = 0.175,
+    y = -0.05 - 0.01,
+    label = expression(italic("p") ~ "= 2.7 x 10" ^ "-7"),
+    size = 4,
+    color = "palegreen3") +
+  annotate(
+    geom = "text",
+    x = 0.175,
+    y = 0.05 + 0.01,
+    label = expression("R" ^ "2" ~ "= 0.003"),
+    size = 4,
+    color = "gray50") +
+  annotate(
+    geom = "text",
+    x = 0.175,
+    y = 0.05 - 0.01,
+    label = expression(italic("p") ~ "= 0.0026"),
+    size = 4,
+    color = "gray50")
+# ggsave("Figures/06_Neutrophil_Inflammation_regression_D3.pdf")
+
+# Day 9
+Lung@meta.data %>% 
+  filter(orig.ident %in% c("Day9_Young", "Day9_Aged")) %>%
+  # filter(orig.ident %in% c("Day3_Young", "Day3_Aged", "Day9_Young", "Day9_Aged")) %>%
+  ggplot(aes(x = spotlight_neutrophils, y = Geneset_Inflammation1, color = orig.ident)) +
+  geom_point(size = 0.3) +
+  geom_smooth(aes(group = orig.ident, color = orig.ident), formula = y ~ x, se = F, size = 1.25) +
+  xlab("Neutrophil proportion of sequenced spot") +
+  ylab("Inflammation geneset score") +
+  theme_minimal() +
+  scale_color_manual(name = "Sample", values = c("darkgreen", "gray20"), labels = c("Day 9 Young", "Day 9 Aged")) +
+  # scale_color_manual(name = "Sample", values = c("palegreen3", "gray50", "darkgreen", "gray20"), labels = c("Day 3 Young", "Day 3 Aged", "Day 9 Young", "Day 9 Aged")) +
+  scale_x_continuous(labels = scales::percent_format()) +
+  annotate(
+    geom = "text",
+    x = 0.25,
+    y = 0.05 + 0.015,
+    label = expression("R" ^ "2" ~ "= 6.2 x 10" ^ "-6"),
+    size = 4,
+    color = "darkgreen") +
+  annotate(
+    geom = "text",
+    x = 0.25,
+    y = 0.05 - 0.015,
+    label = expression(italic("p") ~ "= 0.31 (ns)"),
+    size = 4,
+    color = "darkgreen") +
+  annotate(
+    geom = "text",
+    x = 0.25,
+    y = 0.2 + 0.015,
+    label = expression("R" ^ "2" ~ "= 0.074"),
+    size = 4,
+    color = "gray20") +
+  annotate(
+    geom = "text",
+    x = 0.25,
+    y = 0.2 - 0.015,
+    label = expression(italic("p") ~ "= 4.9 x 10" ^ "-52"),
+    size = 4,
+    color = "gray20")
+# ggsave("Figures/06_Neutrophil_Inflammation_regression_D9.pdf")
+```
+
+```{r Monocyte localization}
+Lung$spotlight_Monocytes <- NA
+Lung@meta.data[which(Lung$orig.ident == "Day0_Young"), "spotlight_Monocytes"] <- D0_young_spotlight[[2]][ , c("Monocytes")]
+Lung@meta.data[which(Lung$orig.ident == "Day0_Aged"), "spotlight_Monocytes"] <- D0_aged_spotlight[[2]][ , c("Monocytes")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Young"), "spotlight_Monocytes"] <- D3_young_spotlight[[2]][ , c("Monocytes")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Aged"), "spotlight_Monocytes"] <- D3_aged_spotlight[[2]][ , c("Monocytes")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Young"), "spotlight_Monocytes"] <- D9_young_spotlight[[2]][ , c("Monocytes")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Aged"), "spotlight_Monocytes"] <- D9_aged_spotlight[[2]][ , c("Monocytes")]
+
+
+(summary(lm(
+  formula = Geneset_Inflammation1 ~ spotlight_Monocytes,
+  data = Lung@meta.data %>% filter(orig.ident == "Day3_Young"))))#$coefficients["spotlight_Monocytes", "Pr(>|t|)"]
+# Adjusted R-squared: 0.06683; p-value: 1.840344e-39; m = 0.4506076
+
+(summary(lm(
+  formula = Geneset_Inflammation1 ~ spotlight_Monocytes,
+  data = Lung@meta.data %>% filter(orig.ident == "Day3_Aged"))))
+# Adjusted R-squared: 0.01528; p-value: 2.86e-10; m = 0.232440
+
+Lung@meta.data %>% 
+  filter(orig.ident %in% c("Day3_Young", "Day3_Aged")) %>%
+  ggplot(aes(x = spotlight_Monocytes, y = Geneset_Inflammation1, color = orig.ident)) +
+  geom_point(size = 0.3) +
+  geom_smooth(aes(group = orig.ident, color = orig.ident), formula = y ~ x, se = F, size = 1.25) +
+  xlab("Monocyte proportion of sequenced spot") +
+  ylab("Inflammation geneset score") +
+  theme_minimal() +
+  scale_color_manual(name = "Sample", values = c("palegreen3", "gray50"), labels = c("Day 3 Young", "Day 3 Aged")) +
+  scale_x_continuous(labels = scales::percent_format())
+
+Lung@meta.data %>% 
+  filter(orig.ident %in% c("Day3_Young", "Day3_Aged")) %>%
+  ggplot(aes(x = spotlight_Monocytes, y = spotlight_AM, color = orig.ident)) +
+  geom_point(size = 0.3) +
+  geom_smooth(aes(group = orig.ident, color = orig.ident), formula = y ~ x, se = F, size = 1.25) +
+  xlab("Monocyte proportion of sequenced spot") +
+  ylab("AM proportion of sequenced spot") +
+  theme_minimal() +
+  scale_color_manual(name = "Sample", values = c("palegreen3", "gray50"), labels = c("Day 3 Young", "Day 3 Aged")) +
+  scale_x_continuous(labels = scales::percent_format()) +
+  scale_y_continuous(labels = scales::percent_format())
+```
+
+```{r Endothelial cell localization}
+# Add proportions of ECs to meta data
+Lung$spotlight_ECs <- NA
+
+Lung@meta.data[which(Lung$orig.ident == "Day0_Young"), "spotlight_ECs"] <- D0_young_spotlight[[2]][ , c("Endothelial.cells")]
+Lung@meta.data[which(Lung$orig.ident == "Day0_Aged"), "spotlight_ECs"] <- D0_aged_spotlight[[2]][ , c("Endothelial.cells")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Young"), "spotlight_ECs"] <- D3_young_spotlight[[2]][ , c("Endothelial.cells")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Aged"), "spotlight_ECs"] <- D3_aged_spotlight[[2]][ , c("Endothelial.cells")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Young"), "spotlight_ECs"] <- D9_young_spotlight[[2]][ , c("Endothelial.cells")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Aged"), "spotlight_ECs"] <- D9_aged_spotlight[[2]][ , c("Endothelial.cells")]
+
+
+### Vascular wound healing on Day 3
+summary(lm(
+  formula = Geneset_Vascular_healing1 ~ spotlight_ECs,
+  data = Lung@meta.data %>% filter(orig.ident == "Day3_Young")))#$coefficients["spotlight_Car4_ECs", "Pr(>|t|)"]
+# Slope: 0.654641; Adjusted R-squared: 0.004703; p-value: 0.000364
+summary(lm(
+  formula = Geneset_Vascular_healing1 ~ spotlight_ECs,
+  data = Lung@meta.data %>% filter(orig.ident == "Day3_Aged")))#$coefficients["spotlight_Car4_ECs", "Pr(>|t|)"]
+# Slope: 0.043059; Adjusted R-squared: -0.0003682; p-value: 0.7872
+
+### Vascular wound healing on Day 9
+summary(lm(
+  formula = Geneset_Vascular_healing1 ~ spotlight_ECs,
+  data = Lung@meta.data %>% filter(orig.ident == "Day9_Young")))#$coefficients["spotlight_Car4_ECs", "Pr(>|t|)"]
+# p-value: 0.1329
+summary(lm(
+  formula = Geneset_Vascular_healing1 ~ spotlight_ECs,
+  data = Lung@meta.data %>% filter(orig.ident == "Day9_Aged")))#$coefficients["spotlight_Car4_ECs", "Pr(>|t|)"]
+# p-value: 0.9762
+
+
+# min(Lung$spotlight_ECs)
+# max(Lung$spotlight_ECs)
+p1 <- SpatialFeaturePlot(Lung, features = c("spotlight_ECs"), images = c("Day.0.Young")) +
+  scale_fill_gradientn(limits = c(0, 0.23), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p2 <- SpatialFeaturePlot(Lung, features = c("spotlight_ECs"), images = c("Day.3.Young")) +
+  scale_fill_gradientn(limits = c(0, 0.23), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p3 <- SpatialFeaturePlot(Lung, features = c("spotlight_ECs"), images = c("Day.9.Young")) +
+  scale_fill_gradientn(limits = c(0, 0.23), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p4 <- SpatialFeaturePlot(Lung, features = c("spotlight_ECs"), images = c("Day.0.Aged")) +
+  scale_fill_gradientn(limits = c(0, 0.23), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p5 <- SpatialFeaturePlot(Lung, features = c("spotlight_ECs"), images = c("Day.3.Aged")) +
+  scale_fill_gradientn(limits = c(0, 0.23), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p6 <- SpatialFeaturePlot(Lung, features = c("spotlight_ECs"), images = c("Day.9.Aged")) +
+  scale_fill_gradientn(limits = c(0, 0.23), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+plot_grid(p1, p2, p3, ncol = 3)
+# ggsave("Figures/06_EC_Spotlight_SpatialPlot_Young.png", bg = "white", height = 2.5)
+plot_grid(p4, p5, p6, ncol = 3)
+# ggsave("Figures/06_EC_Spotlight_SpatialPlot_Aged.png", bg = "white", height = 2.5)
+
+# Save legend separately
+as_ggplot(get_legend(SpatialFeaturePlot(Lung, features = c("spotlight_ECs"), images = c("Day.0.Young")) +
+  scale_fill_gradientn(limits = c(0, 0.23), colors = rev(brewer.pal(11, "Spectral"))) +
+    theme(legend.title = element_blank())))
+# ggsave("Figures/06_EC_Spotlight_SpatialPlot_Legend.pdf", bg = "transparent")
+```
+
+```{r Car4+ endothelial cell localization}
+# Do Car4+ ECs colocalize with inflammation better in Young than Aged on Day 9?
+
+# Add proportions of Car4 ECs to meta data
+Lung$spotlight_Car4_ECs <- NA
+
+Lung@meta.data[which(Lung$orig.ident == "Day0_Young"), "spotlight_Car4_ECs"] <- D0_young_spotlight[[2]][ , c("Car4..endothelial.cells")]
+Lung@meta.data[which(Lung$orig.ident == "Day0_Aged"), "spotlight_Car4_ECs"] <- D0_aged_spotlight[[2]][ , c("Car4..endothelial.cells")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Young"), "spotlight_Car4_ECs"] <- D3_young_spotlight[[2]][ , c("Car4..endothelial.cells")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Aged"), "spotlight_Car4_ECs"] <- D3_aged_spotlight[[2]][ , c("Car4..endothelial.cells")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Young"), "spotlight_Car4_ECs"] <- D9_young_spotlight[[2]][ , c("Car4..endothelial.cells")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Aged"), "spotlight_Car4_ECs"] <- D9_aged_spotlight[[2]][ , c("Car4..endothelial.cells")]
+
+### Car4+ Vascular wound healing on Day 3
+summary(lm(
+  formula = Geneset_Vascular_healing1 ~ spotlight_Car4_ECs,
+  data = Lung@meta.data %>% dplyr::filter(orig.ident == "Day3_Young")))#$coefficients["spotlight_Car4_ECs", "Pr(>|t|)"]
+# Slope: 0.12135; Adjusted R-squared: -0.0003395; p-value: 0.6922
+summary(lm(
+  formula = Geneset_Vascular_healing1 ~ spotlight_Car4_ECs,
+  data = Lung@meta.data %>% dplyr::filter(orig.ident == "Day3_Aged")))#$coefficients["spotlight_Car4_ECs", "Pr(>|t|)"]
+# Slope: -1.273544; Adjusted R-squared: 0.004108; p-value: 0.0007493
+
+
+### Car4+ Vascular wound healing on Day 9
+summary(lm(
+  formula = Geneset_Vascular_healing1 ~ spotlight_Car4_ECs,
+  data = Lung@meta.data %>% dplyr::filter(orig.ident == "Day9_Young")))#$coefficients["spotlight_Car4_ECs", "Pr(>|t|)"]
+# Slope: 0.538942; Adjusted R-squared: 0.001125; p-value: 0.0404
+summary(lm(
+  formula = Geneset_Vascular_healing1 ~ spotlight_Car4_ECs,
+  data = Lung@meta.data %>% dplyr::filter(orig.ident == "Day9_Aged")))#$coefficients["spotlight_Car4_ECs", "Pr(>|t|)"]
+# Slope: -0.064976; Adjusted R-squared: -0.0003126; p-value: 0.7879
+
+Lung$Geneset_Vascular_healing1 %>% min()
+Lung$Geneset_Vascular_healing1 %>% max()
+
+SpatialFeaturePlot(Lung, features = c("Geneset_Vascular_healing1"), images = c("Day.9.Young")) +
+  scale_fill_gradientn(limits = c(-0.4, 1.03), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+# ggsave("Figures/07_VascHealing_SpatialPlot_D9_Young.png", bg = "transparent", width = 2.5, height = 2.5)
+
+SpatialFeaturePlot(Lung, features = c("Geneset_Vascular_healing1"), images = c("Day.9.Aged")) +
+  scale_fill_gradientn(limits = c(-0.4, 1.03), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+# ggsave("Figures/07_VascHealing_SpatialPlot_D9_Aged.png", bg = "transparent", width = 2.5, height = 2.5)
+
+# Save legend separately
+as_ggplot(get_legend(SpatialFeaturePlot(Lung, features = c("spotlight_Car4_ECs"), images = c("Day.0.Young")) +
+  scale_fill_gradientn(limits = c(-0.4, 1.03), colors = rev(brewer.pal(11, "Spectral"))) +
+    theme(legend.title = element_blank())))
+# ggsave("Figures/07_VascHealing_SpatialPlot_Legend.pdf", bg = "transparent", width = 2, height = 1)
+
+Lung@meta.data %>% 
+  dplyr::filter(orig.ident %in% c("Day9_Young", "Day9_Aged")) %>%
+  ggplot(aes(x = spotlight_Car4_ECs, y = Geneset_Vascular_healing1, color = orig.ident)) +
+  geom_point(size = 0.3) +
+  geom_smooth(aes(group = orig.ident, color = orig.ident), formula = y ~ x, se = F, size = 1.25) +
+  xlab(expression("Car4" ^ "+" ~ "EC proportion of sequenced spot")) +
+  ylab("Vascular wound healing gene set score") +
+  theme_minimal() +
+  scale_color_manual(name = "Sample", values = c("darkgreen", "gray20"), labels = c("Day 9 Young", "Day 9 Aged")) +
+  scale_x_continuous(labels = scales::percent_format()) +
+  annotate(
+    geom = "text",
+    x = 0.15,
+    y = 0.75 + 0.05,
+    label = expression("R" ^ "2" ~ "= 0.001"),
+    size = 4,
+    color = "darkgreen") +
+  annotate(
+    geom = "text",
+    x = 0.15,
+    y = 0.75 - 0.05,
+    label = expression(italic("p") ~ "= 0.04"),
+    size = 4,
+    color = "darkgreen") +
+  annotate(
+    geom = "text",
+    x = 0.15,
+    y = 0.5 - 0.05,
+    label = expression(italic("p") ~ "= 0.79 (ns)"),
+    size = 4,
+    color = "gray20")
+# ggsave("Figures/07_Car4_VascHealing_Regression.pdf")
+
+### Inflammation on Day 3
+summary(lm(
+  formula = Geneset_Inflammation1 ~ spotlight_Car4_ECs,
+  data = Lung@meta.data %>% filter(orig.ident == "Day3_Young")))#$coefficients["spotlight_Car4_ECs", "Pr(>|t|)"]
+# Slope: 0.4167518; Adjusted R-squared: 0.03644; p-value: 4.780095e-22
+summary(lm(
+  formula = Geneset_Inflammation1 ~ spotlight_Car4_ECs,
+  data = Lung@meta.data %>% filter(orig.ident == "Day3_Aged")))#$coefficients["spotlight_Car4_ECs", "Pr(>|t|)"]
+# Slope: 0.588439; Adjusted R-squared: 0.04007; p-value: 2.081504e-24
+
+# Day 3
+Lung@meta.data %>% 
+  dplyr::filter(orig.ident %in% c("Day3_Young", "Day3_Aged")) %>%
+  ggplot(aes(x = spotlight_Car4_ECs, y = Geneset_Inflammation1, color = orig.ident)) +
+  geom_point(size = 0.3) +
+  geom_smooth(aes(group = orig.ident, color = orig.ident), formula = y ~ x, se = F, size = 1.25) +
+  xlab(expression("Car4" ^ "+" ~ "EC proportion of sequenced spot")) +
+  ylab("Inflammation geneset score") +
+  theme_minimal() +
+  scale_color_manual(name = "Sample", values = c("palegreen3", "gray50"), labels = c("Day 3 Young", "Day 3 Aged")) +
+  scale_x_continuous(labels = scales::percent_format()) +
+  annotate(
+    geom = "text",
+    x = 0.07,
+    y = -0.1 + 0.01,
+    label = expression("R" ^ "2" ~ "= 0.04"),
+    size = 4,
+    color = "palegreen3") +
+  annotate(
+    geom = "text",
+    x = 0.07,
+    y = -0.1 - 0.01,
+    label = expression(italic("p") ~ "= 4.8 x 10" ^ "-22"),
+    size = 4,
+    color = "palegreen3") +
+  annotate(
+    geom = "text",
+    x = 0.07,
+    y = 0.1 + 0.01,
+    label = expression("R" ^ "2" ~ "= 0.04"),
+    size = 4,
+    color = "gray50") +
+  annotate(
+    geom = "text",
+    x = 0.07,
+    y = 0.1 - 0.01,
+    label = expression(italic("p") ~ "= 2.1 x 10" ^ "-24"),
+    size = 4,
+    color = "gray50")
+# ggsave("Figures/07_Car4EC_Inflammation_regression_D3.pdf")
+
+### Inflammation on Day 9
+summary(lm(
+  formula = Geneset_Inflammation1 ~ spotlight_Car4_ECs,
+  data = Lung@meta.data %>% dplyr::filter(orig.ident == "Day9_Young")))
+# Slope: -0.507241; Adjusted R-squared: 0.01788; p-value: 4.73e-13
+summary(lm(
+  formula = Geneset_Inflammation1 ~ spotlight_Car4_ECs,
+  data = Lung@meta.data %>% dplyr::filter(orig.ident == "Day9_Aged")))
+# Slope: -0.333946; Adjusted R-squared: 0.007087; p-value: 2.591e-06
+
+Lung@meta.data %>% 
+  dplyr::filter(orig.ident %in% c("Day9_Young", "Day9_Aged")) %>%
+  ggplot(aes(x = spotlight_Car4_ECs, y = Geneset_Inflammation1, color = orig.ident)) +
+  geom_point(size = 0.3) +
+  geom_smooth(aes(group = orig.ident, color = orig.ident), formula = y ~ x, se = F, size = 1.25) +
+  xlab(expression("Car4" ^ "+" ~ "EC proportion of sequenced spot")) +
+  ylab("Inflammation geneset score") +
+  theme_minimal() +
+  scale_color_manual(name = "Sample", values = c("darkgreen", "gray20"), labels = c("Day 9 Young", "Day 9 Aged")) +
+  scale_x_continuous(labels = scales::percent_format()) +
+  annotate(
+    geom = "text",
+    x = 0.125,
+    y = 0.15 + 0.015,
+    label = expression("R" ^ "2" ~ "= 0.02"),
+    size = 4,
+    color = "darkgreen") +
+  annotate(
+    geom = "text",
+    x = 0.125,
+    y = 0.15 - 0.015,
+    label = expression(italic("p") ~ "= 4.7 x 10" ^ "-13"),
+    size = 4,
+    color = "darkgreen") +
+  annotate(
+    geom = "text",
+    x = 0.125,
+    y = 0.25 + 0.015,
+    label = expression("R" ^ "2" ~ "= 0.007"),
+    size = 4,
+    color = "gray20") +
+  annotate(
+    geom = "text",
+    x = 0.125,
+    y = 0.25 - 0.015,
+    label = expression(italic("p") ~ "= 2.6 x 10" ^ "-6"),
+    size = 4,
+    color = "gray20")
+ggsave("Figures_RJB/07_Car4EC_Inflammation_regression_D9.pdf")
+
+# min(Lung$spotlight_Car4_ECs)
+# max(Lung$spotlight_Car4_ECs)
+p1 <- SpatialFeaturePlot(Lung, features = c("spotlight_Car4_ECs"), images = c("Day.0.Young")) +
+  scale_fill_gradientn(limits = c(0, 0.17), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p2 <- SpatialFeaturePlot(Lung, features = c("spotlight_Car4_ECs"), images = c("Day.3.Young")) +
+  scale_fill_gradientn(limits = c(0, 0.17), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p3 <- SpatialFeaturePlot(Lung, features = c("spotlight_Car4_ECs"), images = c("Day.9.Young")) +
+  scale_fill_gradientn(limits = c(0, 0.17), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p4 <- SpatialFeaturePlot(Lung, features = c("spotlight_Car4_ECs"), images = c("Day.0.Aged")) +
+  scale_fill_gradientn(limits = c(0, 0.17), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p5 <- SpatialFeaturePlot(Lung, features = c("spotlight_Car4_ECs"), images = c("Day.3.Aged")) +
+  scale_fill_gradientn(limits = c(0, 0.17), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+p6 <- SpatialFeaturePlot(Lung, features = c("spotlight_Car4_ECs"), images = c("Day.9.Aged")) +
+  scale_fill_gradientn(limits = c(0, 0.17), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+plot_grid(p1, p2, p3, ncol = 3)
+# ggsave("Figures/07_Car4EC_Spotlight_SpatialPlot_Young.png", bg = "white", height = 2.5)
+plot_grid(p4, p5, p6, ncol = 3)
+# ggsave("Figures/07_Car4EC_Spotlight_SpatialPlot_Aged.png", bg = "white", height = 2.5)
+
+SpatialFeaturePlot(Lung, features = c("spotlight_Car4_ECs"), images = c("Day.9.Young")) +
+  scale_fill_gradientn(limits = c(0, 0.17), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+# ggsave("Figures/07_Car4EC_Spotlight_SpatialPlot_D9_Young.png", bg = "white", width = 2.5, height = 2.5)
+
+SpatialFeaturePlot(Lung, features = c("spotlight_Car4_ECs"), images = c("Day.9.Aged")) +
+  scale_fill_gradientn(limits = c(0, 0.17), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+# ggsave("Figures/07_Car4EC_Spotlight_SpatialPlot_D9_Aged.png", bg = "white", width = 2.5, height = 2.5)
+
+# Save legend separately
+as_ggplot(get_legend(SpatialFeaturePlot(Lung, features = c("spotlight_Car4_ECs"), images = c("Day.0.Young")) +
+  scale_fill_gradientn(limits = c(0, 0.17), colors = rev(brewer.pal(11, "Spectral"))) +
+    theme(legend.title = element_blank())))
+# ggsave("Figures/07_Car4EC_Spotlight_SpatialPlot_Legend.pdf", bg = "transparent", width = 2, height = 1)
+```
+
+```{r CD8 T cell localization}
+# Add proportions of CD8 T cells to meta data
+Lung$spotlight_CD8 <- NA
+
+Lung@meta.data[which(Lung$orig.ident == "Day0_Young"), "spotlight_CD8"] <- D0_young_spotlight[[2]][ , c("CD8.T.cells")]
+Lung@meta.data[which(Lung$orig.ident == "Day0_Aged"), "spotlight_CD8"] <- D0_aged_spotlight[[2]][ , c("CD8.T.cells")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Young"), "spotlight_CD8"] <- D3_young_spotlight[[2]][ , c("CD8.T.cells")]
+Lung@meta.data[which(Lung$orig.ident == "Day3_Aged"), "spotlight_CD8"] <- D3_aged_spotlight[[2]][ , c("CD8.T.cells")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Young"), "spotlight_CD8"] <- D9_young_spotlight[[2]][ , c("CD8.T.cells")]
+Lung@meta.data[which(Lung$orig.ident == "Day9_Aged"), "spotlight_CD8"] <- D9_aged_spotlight[[2]][ , c("CD8.T.cells")]
+
+
+
+### Inflammation on Day 9
+summary(lm(
+  formula = Geneset_Inflammation1 ~ spotlight_CD8,
+  data = Lung@meta.data %>% dplyr::filter(orig.ident == "Day9_Young")))#$coefficients["spotlight_CD8", "Pr(>|t|)"]
+# Slope: 0.366874; Adjusted R-squared: 0.07766; p-value: 3.69573e-52
+summary(lm(
+  formula = Geneset_Inflammation1 ~ spotlight_CD8,
+  data = Lung@meta.data %>% dplyr::filter(orig.ident == "Day9_Aged")))#$coefficients["spotlight_CD8", "Pr(>|t|)"]
+# Slope: 0.62516; Adjusted R-squared: 0.1607; p-value: 3.050811e-115
+
+Lung@meta.data %>% 
+  dplyr::filter(orig.ident %in% c("Day9_Young", "Day9_Aged")) %>%
+  ggplot(aes(x = spotlight_CD8, y = Geneset_Inflammation1, color = orig.ident)) +
+  geom_point(size = 0.3) +
+  geom_smooth(aes(group = orig.ident, color = orig.ident), formula = y ~ x, se = F, size = 1.25) +
+  xlab("CD8 T cell proportion of sequenced spot") +
+  ylab("Inflammation geneset score") +
+  theme_minimal() +
+  scale_color_manual(name = "Sample", values = c("darkgreen", "gray20"), labels = c("Day 9 Young", "Day 9 Aged")) +
+  scale_x_continuous(labels = scales::percent_format())
+  
+
+### Apoptosis on Day 9
+summary(lm(
+  formula = Geneset_Apoptosis1 ~ spotlight_CD8,
+  data = Lung@meta.data %>% filter(orig.ident == "Day9_Young")))#$coefficients["spotlight_CD8", "Pr(>|t|)"]
+# Slope: 0.135235; Adjusted R-squared: 0.009224; p-value: 1.69e-07
+summary(lm(
+  formula = Geneset_Apoptosis1 ~ spotlight_CD8,
+  data = Lung@meta.data %>% filter(orig.ident == "Day9_Aged")))#$coefficients["spotlight_CD8", "Pr(>|t|)"]
+# Slope: 0.286260; Adjusted R-squared: 0.02665; p-value: 2.1263e-19
+
+Lung@meta.data %>% 
+  filter(orig.ident %in% c("Day9_Young", "Day9_Aged")) %>%
+  ggplot(aes(x = spotlight_CD8, y = Geneset_Apoptosis1, color = orig.ident)) +
+  geom_point(size = 0.3) +
+  geom_smooth(aes(group = orig.ident, color = orig.ident), formula = y ~ x, se = F, size = 1.25) +
+  xlab("CD8 T cell proportion of sequenced spot") +
+  ylab("Apoptosis geneset score") +
+  theme_minimal() +
+  scale_color_manual(name = "Sample", values = c("darkgreen", "gray20"), labels = c("Day 9 Young", "Day 9 Aged")) +
+  scale_x_continuous(labels = scales::percent_format())
+```
+
+```{r CD8 T cell location spatial plots}
+filter(Lung@meta.data, Timepoint == "Day 9") %>% pull(spotlight_CD8) %>% min()
+filter(Lung@meta.data, Timepoint == "Day 9") %>% pull(spotlight_CD8) %>% max()
+
+SpatialFeaturePlot(Lung, features = c("spotlight_CD8"), images = c("Day.9.Young")) +
+  scale_fill_gradientn(limits = c(0, 0.23), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+# ggsave("Figures/11_CD8_Spotlight_SpatialPlot_Young_D9.png", bg = "white", width = 2.5, height = 2.5)
+
+SpatialFeaturePlot(Lung, features = c("spotlight_CD8"), images = c("Day.9.Aged")) +
+  scale_fill_gradientn(limits = c(0, 0.23), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+# ggsave("Figures/11_CD8_Spotlight_SpatialPlot_Aged_D9.png", bg = "white", width = 2.5, height = 2.5)
+
+# Save legend separately
+as_ggplot(get_legend(SpatialFeaturePlot(Lung, features = c("spotlight_CD8"), images = c("Day.0.Young")) +
+  scale_fill_gradientn(limits = c(0, 0.23), colors = rev(brewer.pal(11, "Spectral"))) +
+    theme(legend.title = element_blank())))
+# ggsave("Figures/11_CD8_Spotlight_SpatialPlot_Legend_D9.pdf", bg = "transparent", width = 4, height = 2)
+```
+
+```{r CD8 T cell CXCL colocalization}
+# Cellchat predicts that CD8 T cells in aged mice on Day 9 undergo more CXCL signaling (CXLC12) compared to young
+# Look for colocalization differences on Day 9 between CXCL12 and CD8 T cell location from SPOTlight
+
+DotPlot(Lung, features = c("Cxcl12"), group.by = "orig.ident")
+
+CXCL_D9_Young <- data.frame(
+  "Cxcl12" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Cxcl12",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day9_Young")]])),
+  "CD8_pct" = Lung$spotlight_CD8[which(Lung$orig.ident == "Day9_Young")] * 100
+)
+
+CXCL_D9_Aged <- data.frame(
+  "Cxcl12" = as.numeric(as.logical(Lung@assays$Spatial@data[
+    "Cxcl12",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day9_Aged")]])),
+  "CD8_pct" = Lung$spotlight_CD8[which(Lung$orig.ident == "Day9_Aged")] * 100
+)
+
+summary(glm(Cxcl12 ~ CD8_pct, data = CXCL_D9_Young, family = binomial))
+summary(glm(Cxcl12 ~ CD8_pct, data = CXCL_D9_Aged, family = binomial))
+
+
+CXCL_D9_Young %>% 
+  ggplot(aes(x = CD8_pct, y = as.numeric(as.logical(Cxcl12)))) + 
+  geom_point() +
+  stat_smooth(method = "glm", se = FALSE, method.args = list(family = binomial), col = "darkgreen") +
+  theme_minimal()
+
+CXCL_D9_Aged %>% 
+  ggplot(aes(x = CD8_pct, y = as.numeric(as.logical(Cxcl12)))) + 
+  geom_point() +
+  stat_smooth(method = "glm", se = FALSE, method.args = list(family = binomial), col = "gray20") +
+  theme_minimal()
+
+
+CXCL_D9_Young <- data.frame(
+  "Cxcl12" = Lung@assays$Spatial@data[
+    "Cxcl12",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day9_Young")]],
+  "CD8_pct" = Lung$spotlight_CD8[which(Lung$orig.ident == "Day9_Young")] * 100
+)
+
+CXCL_D9_Aged <- data.frame(
+  "Cxcl12" = Lung@assays$Spatial@data[
+    "Cxcl12",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day9_Aged")]],
+  "CD8_pct" = Lung$spotlight_CD8[which(Lung$orig.ident == "Day9_Aged")] * 100
+)
+
+summary(glm(Cxcl12 ~ CD8_pct, data = CXCL_D9_Young))
+summary(glm(Cxcl12 ~ CD8_pct, data = CXCL_D9_Aged))
+
+```
+
+```{r CD8 T cell CCL colocalization}
+# Cellchat predicts that CD8 T cells in aged mice on Day 9 undergo more CCL signaling (CCL3/4/5/8) compared to young (likely due to aged CD8 T cells upregulating Ccr5)
+# Look for colocalization differences on Day 9 between CCL3/4/5/8 and CD8 T cell location from SPOTlight
+
+CCL_D9_Young <- data.frame(
+  "Ccl3" = as.numeric(Lung@assays$Spatial@data[
+    "Ccl3",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day9_Young")]]),
+  "Ccl4" = as.numeric(Lung@assays$Spatial@data[
+    "Ccl4",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day9_Young")]]),
+  "Ccl5" = as.numeric(Lung@assays$Spatial@data[
+    "Ccl5",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day9_Young")]]),
+  "Ccl8" = as.numeric(Lung@assays$Spatial@data[
+    "Ccl8",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day9_Young")]]),
+  "CD8_pct" = Lung$spotlight_CD8[which(Lung$orig.ident == "Day9_Young")]
+)
+
+CCL_D9_Aged <- data.frame(
+  "Ccl3" = as.numeric(Lung@assays$Spatial@data[
+    "Ccl3",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day9_Aged")]]),
+  "Ccl4" = as.numeric(Lung@assays$Spatial@data[
+    "Ccl4",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day9_Aged")]]),
+  "Ccl5" = as.numeric(Lung@assays$Spatial@data[
+    "Ccl5",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day9_Aged")]]),
+  "Ccl8" = as.numeric(Lung@assays$Spatial@data[
+    "Ccl8",
+    rownames(Lung@meta.data)[which(Lung$orig.ident == "Day9_Aged")]]),
+  "CD8_pct" = Lung$spotlight_CD8[which(Lung$orig.ident == "Day9_Aged")]
+)
+
+summary(lm(Ccl3 ~ CD8_pct, data = CCL_D9_Young))
+summary(lm(Ccl3 ~ CD8_pct, data = CCL_D9_Aged))
+
+summary(lm(Ccl4 ~ CD8_pct, data = CCL_D9_Young))
+summary(lm(Ccl4 ~ CD8_pct, data = CCL_D9_Aged))
+
+(summary(lm(Ccl5 ~ CD8_pct, data = CCL_D9_Young)))#$coefficients["CD8_pct", "Pr(>|t|)"]
+# m = 7.83174; Adj R^2 = 0.09545; p = 3.105219e-64
+summary(lm(Ccl5 ~ CD8_pct, data = CCL_D9_Aged))#$coefficients["CD8_pct", "Pr(>|t|)"]
+# m = 10.28460; Adj R^2 = 0.1325; p = 6.77582e-94
+
+summary(lm(Ccl8 ~ CD8_pct, data = CCL_D9_Young))
+summary(lm(Ccl8 ~ CD8_pct, data = CCL_D9_Aged))
+
+CCL_D9 <- rbind(
+  mutate(CCL_D9_Young, orig.ident = "Day 9 Young"),
+  mutate(CCL_D9_Aged, orig.ident = "Day 9 Aged")) %>% 
+  mutate(orig.ident = factor(orig.ident, levels = c("Day 9 Young", "Day 9 Aged")))
+
+CCL_D9 %>% 
+  ggplot(aes(x = CD8_pct, y = Ccl5, color = orig.ident)) +
+  geom_point(size = 0.3) +
+  geom_smooth(aes(group = orig.ident, color = orig.ident), formula = y ~ x, se = F, size = 1.25) +
+  xlab("CD8 T cell proportion of sequenced spot") +
+  ylab(expression(italic("Ccl5") ~ "expression")) +
+  theme_minimal() +
+  scale_color_manual(name = "Sample", values = c("darkgreen", "gray20"), labels = c("Day 9 Young", "Day 9 Aged")) +
+  scale_x_continuous(labels = scales::percent_format()) +
+  annotate(
+    geom = "text",
+    x = 0.2,
+    y = 0.5 + 0.15,
+    label = expression("R" ^ "2" ~ "= 0.154"),
+    size = 4,
+    color = "darkgreen") +
+  annotate(
+    geom = "text",
+    x = 0.2,
+    y = 0.5 - 0.15,
+    label = expression(italic("p") ~ "= 2.2e" ^ "-16"),
+    size = 4,
+    color = "darkgreen") +
+  annotate(
+    geom = "text",
+    x = 0.2,
+    y = 1.5 + 0.15,
+    label = expression("R" ^ "2" ~ "= 0.1558"),
+    size = 4,
+    color = "gray20") +
+  annotate(
+    geom = "text",
+    x = 0.2,
+    y = 1.5 - 0.15,
+    label = expression(italic("p") ~ "= 2.2e" ^ "-16"),
+    size = 4,
+    color = "gray20")
+ggsave("Figures_RJB/11_CD8_Ccl5_D9_regression.pdf", width = 6, height = 4)
+
+
+subset(Lung, Timepoint == "Day 9")@assays$Spatial["Ccl5", ] %>% as.numeric() %>% min()
+subset(Lung, Timepoint == "Day 9")@assays$Spatial["Ccl5", ] %>% as.numeric() %>% max()
+
+SpatialFeaturePlot(Lung, features = c("Ccl5"), images = c("Day.9.Young")) +
+  scale_fill_gradientn(limits = c(0, 4.32), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+# ggsave("Figures/11_Ccl5_SpatialPlot_Young_D9.png", bg = "white", width = 2.5, height = 2.5)
+
+SpatialFeaturePlot(Lung, features = c("Ccl5"), images = c("Day.9.Aged")) +
+  scale_fill_gradientn(limits = c(0, 4.32), colors = rev(brewer.pal(11, "Spectral"))) +
+  theme(legend.position = "none")
+# ggsave("Figures/11_Ccl5_SpatialPlot_Aged_D9.png", bg = "white", width = 2.5, height = 2.5)
+
+# Save legend separately
+as_ggplot(get_legend(SpatialFeaturePlot(Lung, features = c("spotlight_CD8"), images = c("Day.0.Young")) +
+  scale_fill_gradientn(limits = c(0, 4.32), colors = rev(brewer.pal(11, "Spectral"))) +
+    theme(legend.title = element_blank())))
+# ggsave("Figures/11_Ccl5_SpatialPlot_Legend_D9.pdf", bg = "transparent", width = 2, height = 1)
+```
+
+```{r Wound response module}
+Geneset_Wound_response <- read_tsv("Gene_sets/GOBP_RESPONSE_TO_WOUNDING.v7.5.1.tsv") %>% 
+  filter(STANDARD_NAME == "MAPPED_SYMBOLS") %>% 
+  pull(2) %>% 
+  strsplit(split = ",") %>% 
+  unlist()
+Geneset_Wound_response <- paste0(
+ substring(Geneset_Wound_response, 1, 1),
+ tolower(substring(Geneset_Wound_response, 2))) # Change capitalization
+Geneset_Wound_response <- Geneset_Wound_response[which(Geneset_Wound_response %in% rownames(Lung))] # Restrict to genes present in our data
+Geneset_Wound_response <- list(Geneset_Wound_response)
+Lung <- AddModuleScore(Lung, features = Geneset_Wound_response, name = "Geneset_Wound_response")
+
+VlnPlot(Lung,
+        features = c("Geneset_Wound_response1"),
+        pt.size = 0,
+        group.by = "orig.ident",
+        cols = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = 1, size = 1, linetype = "solid") +
+  stat_compare_means(
+    comparisons = list(
+      c("Day0_Young", "Day0_Aged"),
+      c("Day3_Young", "Day3_Aged"),
+      c("Day9_Young", "Day9_Aged")),
+    label.y = c(0.25, 0.25, 0.25)) +
+  ylim(-0.025, 0.275) +
+  scale_x_discrete(labels = c("Day 0\nYoung", "Day 0\nAged", "Day 3\nYoung", "Day 3\nAged", "Day 9\n Young", "Day 9\nAged")) +
+  theme(axis.title = element_blank(),
+        legend.position = "none",
+        axis.text.x = element_text(angle = 0, hjust = 0.5)) +
+  labs(title = "GO Response to Wounding geneset")
+# ggsave("Figures/08_WoundResponse_Geneset_VlnPlot.pdf")
+
+
+```
+
+```{r Vascular wound healing}
+Geneset_Vascular_healing <- read_tsv("Gene_sets/GOBP_POSITIVE_REGULATION_OF_VASCULAR_WOUND_HEALING.v7.5.1.tsv") %>% 
+  dplyr::filter(STANDARD_NAME == "MAPPED_SYMBOLS") %>% 
+  pull(2) %>% 
+  strsplit(split = ",") %>% 
+  unlist()
+Geneset_Vascular_healing <- paste0(
+ substring(Geneset_Vascular_healing, 1, 1),
+ tolower(substring(Geneset_Vascular_healing, 2))) # Change capitalization
+Geneset_Vascular_healing <- Geneset_Vascular_healing[which(Geneset_Vascular_healing %in% rownames(Lung))] # Restrict to genes present in our data
+Geneset_Vascular_healing <- list(Geneset_Vascular_healing)
+Lung <- AddModuleScore(Lung, features = Geneset_Vascular_healing, name = "Geneset_Vascular_healing")
+
+VlnPlot(Lung,
+        features = c("Geneset_Vascular_healing1"),
+        group.by = "orig.ident", pt.size = 0,
+        cols = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = 1, size = 1, linetype = "solid") +
+  stat_compare_means(
+    comparisons = list(
+      c("Day0_Young", "Day0_Aged"),
+      c("Day3_Young", "Day3_Aged"),
+      c("Day9_Young", "Day9_Aged")),
+    label.y = c(1.2, 1.2, 1.2)) +
+  ylim(-0.5, 1.3) +
+  scale_x_discrete(labels = c("Day 0\nYoung", "Day 0\nAged", "Day 3\nYoung", "Day 3\nAged", "Day 9\n Young", "Day 9\nAged")) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 0, hjust = 0.5),
+        axis.title = element_blank()) +
+  labs(title = "GO Vascular Wound Healing geneset")
+
+
+
+summary(lm(
+  formula = Geneset_Vascular_healing1 ~ Geneset_Fibrosis1,
+  data = Lung@meta.data %>% filter(orig.ident == "Day9_Young")))
+# Adjusted R-squared: 0.037619; p-value: 0.4562
+
+summary(lm(
+  formula = Geneset_Vascular_healing1 ~ Geneset_Fibrosis1,
+  data = Lung@meta.data %>% filter(orig.ident == "Day9_Aged")))
+# Adjusted R-squared: 0.175306; p-value: 0.0008267
+
+Lung@meta.data %>% 
+  dplyr::filter(orig.ident %in% c("Day9_Young", "Day9_Aged")) %>%
+  ggplot(aes(x = Geneset_Fibrosis1, y = Geneset_Vascular_healing1, color = orig.ident)) +
+  geom_point(size = 0.5) +
+  geom_smooth(aes(group = orig.ident, color = orig.ident), formula = y ~ x, se = F, size = 1.25) +
+  xlab("Fibrosis gene set score") +
+  ylab("Vascular wound healing gene set score") +
+  theme_minimal() +
+  scale_color_manual(name = "Sample",values = c("darkgreen", "gray20"), labels = c("Day 9 Young", "Day 9 Aged")) +
+  annotate(
+    geom = "text",
+    x = 0.35,
+    y = 0.625 - 0.04,
+    label = expression(italic("p") ~ "= 0.45 (ns)"),
+    size = 4,
+    color = "darkgreen") +
+  annotate(
+    geom = "text",
+    x = 0.35,
+    y = 0.875 + 0.04,
+    label = expression("R" ^ "2" ~ "= 0.18"),
+    size = 4,
+    color = "gray20") +
+  annotate(
+    geom = "text",
+    x = 0.35,
+    y = 0.875 - 0.04,
+    label = expression(italic("p") ~ "= 0.0008"),
+    size = 4,
+    color = "gray20")
+# ggsave("Figures/09_VascWoundHeal_Fibrosis_Geneset_Regression.pdf")
+```
+
+```{r Gdf15}
+SpatialFeaturePlot(Lung, features = c("Gdf15"), images = c("Day.3.Young", "Day.3.Aged", "Day.9.Young", "Day.9.Aged"))
+DotPlot(Lung, features = c("Gdf15"), group.by = "orig.ident")
+DotPlot(Lung, features = c("Gdf15"))
+
+VlnPlot(Lung,
+        features = c("Gdf15"), group.by = "orig.ident", pt.size = 0.1,
+        cols = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) +
+  theme(axis.title = element_blank(),
+        legend.position = "none",
+        axis.text.x = element_text(angle = 0, hjust = 0.5)) +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = 1, size = 1, linetype = "solid") +
+  stat_compare_means(
+    comparisons = list(
+      c("Day0_Young", "Day0_Aged"),
+      c("Day3_Young", "Day3_Aged"),
+      c("Day9_Young", "Day9_Aged")),
+    label.y = c(3.5, 3.5, 3.5)) +
+  ylim(-0.01, 4)
+
+### Correlation - Gdf15 vs inflammation module
+Gdf15_all <- data.frame(Gdf15 = t(Lung@assays$Spatial["Gdf15", ]), orig.ident = Lung$orig.ident, Inflammation = Lung$Geneset_Inflammation1) %>% 
+  filter(Gdf15 > 0)
+
+summary(lm(Gdf15 ~ Inflammation, data = filter(Gdf15_all, orig.ident == c("Day3_Young"))))
+# p-value: 0.5516
+summary(lm(Gdf15 ~ Inflammation, data = filter(Gdf15_all, orig.ident == c("Day3_Aged"))))
+# p-value: 0.000112, m: 4.14662, Adjusted R-squared: 0.0852
+summary(lm(Gdf15 ~ Inflammation, data = filter(Gdf15_all, orig.ident == c("Day9_Young"))))
+# p-value: 0.000683, m: -1.99628, Adjusted R-squared: 0.04546
+summary(lm(Gdf15 ~ Inflammation, data = filter(Gdf15_all, orig.ident == c("Day9_Aged"))))
+# p-value: 0.0001058, m: -1.50581, Adjusted R-squared:  0.03435
+
+Gdf15_all %>% 
+  filter(orig.ident %in% c("Day3_Young", "Day3_Aged", "Day9_Young", "Day9_Aged")) %>%
+  ggplot(aes(x = Inflammation, y = Gdf15, color = orig.ident)) +
+  geom_point(size = 0.3) +
+  geom_smooth(aes(group = orig.ident, color = orig.ident), method = "lm", se = F, size = 1.25) +
+  xlab("Inflammation geneset score") +
+  ylab("Gdf15 expression") +
+  theme_minimal() +
+  scale_color_manual(name = "Sample", values = c("palegreen3", "gray50", "darkgreen", "gray20"), labels = c("Day 3 Young (ns)", "Day 3 Aged ***", "Day 9 Young ***", "Day 9 Aged ***"))
+# ggsave("Figures/10_Gdf15_Inflammation_Correlation.pdf")
+```
+
+```{r Ereg-Egfr colocalization}
+# Module score
+Lung <- AddModuleScore(Lung, features = list(c("Ereg", "Egfr")), name = "Geneset_Ereg_Egfr")
+
+VlnPlot(Lung,
+        features = c("Geneset_Ereg_Egfr1"),
+        group.by = "orig.ident", pt.size = 0,
+        cols = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) +
+  stat_summary(fun = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = 1, size = 1, linetype = "solid") +
+  stat_compare_means(
+    comparisons = list(
+      c("Day0_Young", "Day0_Aged"),
+      c("Day3_Young", "Day3_Aged"),
+      c("Day9_Young", "Day9_Aged")),
+    label.y = c(1.4, 1.4, 1.4)) +
+  ylim(-0.2, 1.5) +
+  scale_x_discrete(labels = c("Day 0\nYoung", "Day 0\nAged", "Day 3\nYoung", "Day 3\nAged", "Day 9\n Young", "Day 9\nAged")) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 0, hjust = 0.5),
+        axis.title = element_blank()) +
+  labs(title = "Ereg-Egfr")
+
+
+data.frame(Ereg = as.numeric(Lung@assays$Spatial["Ereg", ]),
+           Egfr = as.numeric(Lung@assays$Spatial["Egfr", ]),
+           orig.ident = Lung$orig.ident) %>% 
+  filter(orig.ident %in% c("Day9_Young", "Day9_Aged") & Ereg > 0) %>%
+  ggplot(aes(x = Ereg, y = Egfr, color = orig.ident)) +
+  geom_point(size = 0.3) +
+  geom_smooth(aes(group = orig.ident, color = orig.ident), method = "lm", se = F, size = 1.25) +
+  xlab("Ereg expression") +
+  ylab("Egfr expression") +
+  theme_minimal()
+
+SpatialFeaturePlot(Lung, features = c("Ereg"))
+SpatialFeaturePlot(Lung, features = c("Areg"))
+SpatialFeaturePlot(Lung, features = c("Egfr"))
+
+### XYZ - colocalization between AMs and Egfr+ cells?
+```
+
+```{r Serpins}
+# Serpins (esp Serpina1a/b/c/d aka A1AT) enriched in aged by bulk RNA-seq
+SpatialFeaturePlot(Lung, features = c("Serpina1a"))
+SpatialFeaturePlot(Lung, features = c("Serpina1b"))
+SpatialFeaturePlot(Lung, features = c("Serpina1c"))
+SpatialFeaturePlot(Lung, features = c("Serpina1d"))
+```
+
+
+

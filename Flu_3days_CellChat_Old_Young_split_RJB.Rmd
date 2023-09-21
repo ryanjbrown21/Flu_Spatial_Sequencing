@@ -1,0 +1,1011 @@
+---
+title: "MYK048"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Library}
+library(Seurat)
+library(tidyverse)
+library(ggpubr)
+library(RColorBrewer)
+library(lisa)
+library(devtools)
+library(ggrepel)
+
+#devtools::install_github("sqjin/CellChat")
+library(CellChat)
+library(patchwork)
+#BiocManager::install("ComplexHeatmap")
+library(ComplexHeatmap)
+
+#BiocManager::install("BiocNeighbors")
+library(BiocNeighbors)
+
+
+source("~/Documents/MCW/3 – PhD/Bioinformatics_Collaborations/Functions_themes.R")
+```
+
+```{r Load data}
+Flu_pure <- readRDS("RDS_files.nosync/Flu_D0_D3_D9_pure.RDS")
+```
+
+```{r Create and merge 6 CellChat objects}
+# Separate by Timepoint_Age
+
+# Add active.ident to metadata for CellChat to use
+Flu_pure$Named_clusters <- Flu_pure@active.ident
+
+CellChatDB.use <- CellChatDB.mouse # Use the mouse CellChatDB database
+
+# D0_Young
+cellchat_D0_Young <- createCellChat(
+  object = GetAssayData(subset(Flu_pure, cells = rownames(Flu_pure@meta.data[which(Flu_pure$Timepoint_Age == "Day 0 Young"), ])), assay = "RNA", slot = "data"),
+  meta = subset(Flu_pure, cells = rownames(Flu_pure@meta.data[which(Flu_pure$Timepoint_Age == "Day 0 Young"), ]))@meta.data,
+  group.by = "Named_clusters")
+cellchat_D0_Young@DB <- CellChatDB.use
+cellchat_D0_Young <- subsetData(cellchat_D0_Young) # Only keep genes involved in signaling
+cellchat_D0_Young <- identifyOverExpressedGenes(cellchat_D0_Young)
+cellchat_D0_Young <- identifyOverExpressedInteractions(cellchat_D0_Young)
+cellchat_D0_Young <- projectData(cellchat_D0_Young, PPI.mouse)
+cellchat_D0_Young@idents <- droplevels(cellchat_D0_Young@idents,
+                                       exclude = setdiff(
+                                         levels(cellchat_D0_Young@idents),
+                                         unique(cellchat_D0_Young@idents)))
+# Remove unused factor levels to prevent CellChat errors
+cellchat_D0_Young <- computeCommunProb(cellchat_D0_Young)
+cellchat_D0_Young <- filterCommunication(cellchat_D0_Young) # Keep clusters with at least 11 cells (min.cells *excludes* clusters with <= n cells, they shouldn't have included equality in that relation; default is min.cells = 10)
+cellchat_D0_Young <- computeCommunProbPathway(cellchat_D0_Young)
+cellchat_D0_Young <- aggregateNet(cellchat_D0_Young)
+cellchat_D0_Young <- netAnalysis_computeCentrality(cellchat_D0_Young, slot.name = "netP")
+
+# D0_Old
+cellchat_D0_Old <- createCellChat(
+  object = GetAssayData(subset(Flu_pure, cells = rownames(Flu_pure@meta.data[which(Flu_pure$Timepoint_Age == "Day 0 Aged"), ])), assay = "RNA", slot = "data"),
+  meta = subset(Flu_pure, cells = rownames(Flu_pure@meta.data[which(Flu_pure$Timepoint_Age == "Day 0 Aged"), ]))@meta.data,
+  group.by = "Named_clusters")
+cellchat_D0_Old@DB <- CellChatDB.use
+cellchat_D0_Old <- subsetData(cellchat_D0_Old)
+cellchat_D0_Old <- identifyOverExpressedGenes(cellchat_D0_Old)
+cellchat_D0_Old <- identifyOverExpressedInteractions(cellchat_D0_Old)
+cellchat_D0_Old <- projectData(cellchat_D0_Old, PPI.mouse)
+cellchat_D0_Old@idents <- droplevels(cellchat_D0_Old@idents,
+                                     exclude = setdiff(
+                                       levels(cellchat_D0_Old@idents),
+                                       unique(cellchat_D0_Old@idents))) # Remove unused factor levels
+cellchat_D0_Old <- computeCommunProb(cellchat_D0_Old)
+cellchat_D0_Old <- filterCommunication(cellchat_D0_Old)
+cellchat_D0_Old <- computeCommunProbPathway(cellchat_D0_Old)
+cellchat_D0_Old <- aggregateNet(cellchat_D0_Old)
+cellchat_D0_Old <- netAnalysis_computeCentrality(cellchat_D0_Old, slot.name = "netP")
+
+# D3_Young
+cellchat_D3_Young <- createCellChat(
+  object = GetAssayData(subset(Flu_pure, cells = rownames(Flu_pure@meta.data[which(Flu_pure$Timepoint_Age == "Day 3 Young"), ])), assay = "RNA", slot = "data"),
+  meta = subset(Flu_pure, cells = rownames(Flu_pure@meta.data[which(Flu_pure$Timepoint_Age == "Day 3 Young"), ]))@meta.data,
+  group.by = "Named_clusters")
+cellchat_D3_Young@DB <- CellChatDB.use
+cellchat_D3_Young <- subsetData(cellchat_D3_Young)
+cellchat_D3_Young <- identifyOverExpressedGenes(cellchat_D3_Young)
+cellchat_D3_Young <- identifyOverExpressedInteractions(cellchat_D3_Young)
+cellchat_D3_Young <- projectData(cellchat_D3_Young, PPI.mouse)
+cellchat_D3_Young@idents <- droplevels(cellchat_D3_Young@idents,
+                                     exclude = setdiff(
+                                       levels(cellchat_D3_Young@idents),
+                                       unique(cellchat_D3_Young@idents))) # Remove unused factor levels
+cellchat_D3_Young <- computeCommunProb(cellchat_D3_Young)
+cellchat_D3_Young <- filterCommunication(cellchat_D3_Young)
+cellchat_D3_Young <- computeCommunProbPathway(cellchat_D3_Young)
+cellchat_D3_Young <- aggregateNet(cellchat_D3_Young)
+cellchat_D3_Young <- netAnalysis_computeCentrality(cellchat_D3_Young, slot.name = "netP")
+
+# D3_Old
+cellchat_D3_Old <- createCellChat(
+  object = GetAssayData(subset(Flu_pure, cells = rownames(Flu_pure@meta.data[which(Flu_pure$Timepoint_Age == "Day 3 Aged"), ])), assay = "RNA", slot = "data"),
+  meta = subset(Flu_pure, cells = rownames(Flu_pure@meta.data[which(Flu_pure$Timepoint_Age == "Day 3 Aged"), ]))@meta.data,
+  group.by = "Named_clusters")
+cellchat_D3_Old@DB <- CellChatDB.use
+cellchat_D3_Old <- subsetData(cellchat_D3_Old)
+cellchat_D3_Old <- identifyOverExpressedGenes(cellchat_D3_Old)
+cellchat_D3_Old <- identifyOverExpressedInteractions(cellchat_D3_Old)
+cellchat_D3_Old <- projectData(cellchat_D3_Old, PPI.mouse)
+cellchat_D3_Old@idents <- droplevels(cellchat_D3_Old@idents,
+                                     exclude = setdiff(
+                                       levels(cellchat_D3_Old@idents),
+                                       unique(cellchat_D3_Old@idents))) # Remove unused factor levels
+cellchat_D3_Old <- computeCommunProb(cellchat_D3_Old)
+cellchat_D3_Old <- filterCommunication(cellchat_D3_Old)
+cellchat_D3_Old <- computeCommunProbPathway(cellchat_D3_Old)
+cellchat_D3_Old <- aggregateNet(cellchat_D3_Old)
+cellchat_D3_Old <- netAnalysis_computeCentrality(cellchat_D3_Old, slot.name = "netP")
+
+# D9_Young
+cellchat_D9_Young <- createCellChat(
+  object = GetAssayData(subset(Flu_pure, cells = rownames(Flu_pure@meta.data[which(Flu_pure$Timepoint_Age == "Day 9 Young"), ])), assay = "RNA", slot = "data"),
+  meta = subset(Flu_pure, cells = rownames(Flu_pure@meta.data[which(Flu_pure$Timepoint_Age == "Day 9 Young"), ]))@meta.data,
+  group.by = "Named_clusters")
+cellchat_D9_Young@DB <- CellChatDB.use
+cellchat_D9_Young <- subsetData(cellchat_D9_Young)
+cellchat_D9_Young <- identifyOverExpressedGenes(cellchat_D9_Young)
+cellchat_D9_Young <- identifyOverExpressedInteractions(cellchat_D9_Young)
+cellchat_D9_Young <- projectData(cellchat_D9_Young, PPI.mouse)
+cellchat_D9_Young@idents <- droplevels(cellchat_D9_Young@idents,
+                                     exclude = setdiff(
+                                       levels(cellchat_D9_Young@idents),
+                                       unique(cellchat_D9_Young@idents))) # Remove unused factor levels
+cellchat_D9_Young <- computeCommunProb(cellchat_D9_Young)
+cellchat_D9_Young <- filterCommunication(cellchat_D9_Young)
+cellchat_D9_Young <- computeCommunProbPathway(cellchat_D9_Young)
+cellchat_D9_Young <- aggregateNet(cellchat_D9_Young)
+cellchat_D9_Young <- netAnalysis_computeCentrality(cellchat_D9_Young, slot.name = "netP")
+
+# D9_Old
+cellchat_D9_Old <- createCellChat(
+  object = GetAssayData(subset(Flu_pure, cells = rownames(Flu_pure@meta.data[which(Flu_pure$Timepoint_Age == "Day 9 Aged"), ])), assay = "RNA", slot = "data"),
+  meta = subset(Flu_pure, cells = rownames(Flu_pure@meta.data[which(Flu_pure$Timepoint_Age == "Day 9 Aged"), ]))@meta.data,
+  group.by = "Named_clusters")
+cellchat_D9_Old@DB <- CellChatDB.use
+cellchat_D9_Old <- subsetData(cellchat_D9_Old)
+cellchat_D9_Old <- identifyOverExpressedGenes(cellchat_D9_Old)
+cellchat_D9_Old <- identifyOverExpressedInteractions(cellchat_D9_Old)
+cellchat_D9_Old <- projectData(cellchat_D9_Old, PPI.mouse)
+cellchat_D9_Old@idents <- droplevels(cellchat_D9_Old@idents,
+                                     exclude = setdiff(
+                                       levels(cellchat_D9_Old@idents),
+                                       unique(cellchat_D9_Old@idents))) # Remove unused factor levels
+cellchat_D9_Old <- computeCommunProb(cellchat_D9_Old)
+cellchat_D9_Old <- filterCommunication(cellchat_D9_Old)
+cellchat_D9_Old <- computeCommunProbPathway(cellchat_D9_Old)
+cellchat_D9_Old <- aggregateNet(cellchat_D9_Old)
+cellchat_D9_Old <- netAnalysis_computeCentrality(cellchat_D9_Old, slot.name = "netP")
+
+
+### Before merging objects, need to transfer cluster levels using liftCellChat() because not all clusters are in all samples
+# Use factor levels from the original Seurat object for simplicity as these encomapss all clusters in all subsetted CellChat objects
+cellchat_D0_Young <- liftCellChat(cellchat_D0_Young, group.new = levels(Flu_pure@active.ident))
+cellchat_D0_Old <- liftCellChat(cellchat_D0_Old, group.new = levels(Flu_pure@active.ident))
+cellchat_D3_Young <- liftCellChat(cellchat_D3_Young, group.new = levels(Flu_pure@active.ident))
+cellchat_D3_Old <- liftCellChat(cellchat_D3_Old, group.new = levels(Flu_pure@active.ident))
+cellchat_D9_Young <- liftCellChat(cellchat_D9_Young, group.new = levels(Flu_pure@active.ident))
+cellchat_D9_Old <- liftCellChat(cellchat_D9_Old, group.new = levels(Flu_pure@active.ident))
+
+object.list <- list(
+  D0_Young = cellchat_D0_Young,
+  D0_Aged = cellchat_D0_Old,
+  D3_Young = cellchat_D3_Young,
+  D3_Aged = cellchat_D3_Old,
+  D9_Young = cellchat_D9_Young,
+  D9_Aged = cellchat_D9_Old)
+
+cellchat <- mergeCellChat(object.list, add.names = names(object.list))
+```
+
+```{r Save load CellChat}
+# saveRDS(object.list, "RDS_files.nosync/Flu_pure_3days_CellChat_objectlist_5cells.RDS")
+# saveRDS(cellchat, "RDS_files.nosync/Flu_pure_3days_CellChat_5cells.RDS")
+
+saveRDS(object.list, "RDS_files.nosync/Flu_pure_3days_CellChat_objectlist_10cells_RJB2.RDS")
+saveRDS(cellchat, "RDS_files.nosync/Flu_pure_3days_CellChat_10cells_RJB2.RDS")
+
+
+# object.list <- readRDS("RDS_files.nosync/Flu_pure_3days_CellChat_objectlist_5cells.RDS")
+# cellchat <- readRDS("RDS_files.nosync/Flu_pure_3days_CellChat_5cells.RDS")
+
+object.list <- readRDS("RDS_files.nosync/Flu_pure_3days_CellChat_objectlist_10cells_RJB.RDS")
+cellchat <- readRDS("RDS_files.nosync/Flu_pure_3days_CellChat_10cells_RJB.RDS")
+```
+
+```{r List of pathways}
+pathway.union <- unique(
+  c(
+    cellchat@netP$D0_Young$pathways,
+    cellchat@netP$D0_Aged$pathways,
+    cellchat@netP$D3_Young$pathways,
+    cellchat@netP$D3_Aged$pathways,
+    cellchat@netP$D9_Young$pathways,
+    cellchat@netP$D9_Aged$pathways))
+
+pathway.union %>% sort()
+```
+
+```{r Overall signaling in each group}
+# Includes both outgoing and incoming signals
+
+netAnalysis_signalingRole_heatmap(object.list[[1]], pattern = "all", signaling = pathway.union, title = names(object.list)[1], width = 15, height = 18, color.heatmap = "OrRd")
+
+netAnalysis_signalingRole_heatmap(object.list[[2]], pattern = "all", signaling = pathway.union, title = names(object.list)[2], width = 15, height = 18, color.heatmap = "OrRd")
+
+netAnalysis_signalingRole_heatmap(object.list[[3]], pattern = "all", signaling = pathway.union, title = names(object.list)[3], width = 15, height = 18, color.heatmap = "OrRd")
+
+netAnalysis_signalingRole_heatmap(object.list[[4]], pattern = "all", signaling = pathway.union, title = names(object.list)[4], width = 15, height = 18, color.heatmap = "OrRd")
+
+netAnalysis_signalingRole_heatmap(object.list[[5]], pattern = "all", signaling = pathway.union, title = names(object.list)[5], width = 15, height = 18, color.heatmap = "OrRd")
+
+netAnalysis_signalingRole_heatmap(object.list[[6]], pattern = "all", signaling = pathway.union, title = names(object.list)[6], width = 15, height = 18, color.heatmap = "OrRd")
+```
+
+```{r Compare interactions}
+compareInteractions(cellchat, show.legend = F, group = c(1, 2))
+compareInteractions(cellchat, show.legend = F, group = c(1, 2), measure = "weight")
+
+netVisual_diffInteraction(cellchat, weight.scale = T, comparison = c(1, 2))
+netVisual_diffInteraction(cellchat, weight.scale = T, comparison = c(1, 2), measure = "weight")
+
+netVisual_diffInteraction(cellchat, weight.scale = T, comparison = c(3, 4))
+netVisual_diffInteraction(cellchat, weight.scale = T, comparison = c(3, 4), measure = "weight")
+
+netVisual_diffInteraction(cellchat, weight.scale = T, comparison = c(5, 6))
+netVisual_diffInteraction(cellchat, weight.scale = T, comparison = c(5, 6), measure = "weight")
+
+# When visualizing comparative heatmaps, red is increased in second group, blue is increased in first group
+netVisual_heatmap(cellchat, comparison = c(1, 2))
+netVisual_heatmap(cellchat, comparison = c(3, 4))
+netVisual_heatmap(cellchat, comparison = c(5, 6))
+
+netVisual_heatmap(cellchat, comparison = c(1, 2), measure = "weight")
+netVisual_heatmap(cellchat, comparison = c(3, 4), measure = "weight")
+netVisual_heatmap(cellchat, comparison = c(5, 6), measure = "weight")
+```
+
+```{r}
+num.link <- sapply(object.list, function(x) {rowSums(x@net$count) + colSums(x@net$count)-diag(x@net$count)})
+weight.MinMax <- c(min(num.link), max(num.link)) # control the dot size in the different datasets
+
+gg <- list()
+for (i in 1:length(object.list)) {
+  gg[[i]] <- netAnalysis_signalingRole_scatter(object.list[[i]], title = names(object.list)[i], weight.MinMax = weight.MinMax)
+}
+
+# patchwork::wrap_plots(plots = gg)
+
+gg[[1]] +
+  ylim(0, 35) +
+  xlim(0, 50)
+gg[[2]] +
+  ylim(0, 35) +
+  xlim(0, 50)
+
+### Make a single plot where x-axis is *change* in outgoing signal and y-axis is *change* in incoming signal
+
+Young_signal_DF <- gg[[1]]$data
+Old_signal_DF <- gg[[2]]$data
+
+Delta_O_Y_signal_DF <- Old_signal_DF[, 1:3]
+Delta_O_Y_signal_DF$x <- Old_signal_DF$x - Young_signal_DF$x
+Delta_O_Y_signal_DF$y <- Old_signal_DF$y - Young_signal_DF$y
+
+ggplot(Delta_O_Y_signal_DF, aes(x = x, y = y, color = labels)) +
+  geom_point() +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  geom_text_repel(aes(label = labels), force = 20, max.overlaps = 30) +
+  xlab("Change in outgoing interaction strength") +
+  ylab("Change in incoming interaction strength") +
+  xlim(-15, 5) +
+  ylim(-10, 2.5)
+#ggsave("Figures/CellChat/Old_Young_split/01_Incoming_Outgoing_Difference_AllClusters.pdf")
+```
+
+```{r Changes in subset signaling}
+netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Alveolar macrophages", comparison = c(4, 3))
+netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Endothelial cells", comparison = c(4, 3)) 
+
+netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Car4+ endothelial cells", comparison = c(2, 1))
+netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Car4+ endothelial cells", comparison = c(4, 3))
+netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Car4+ endothelial cells", comparison = c(6, 5))
+# Car4+ EC incoming Vegf signaling higher in old on D3, higher in young on D0 and D9
+
+netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Neutrophils", comparison = c(2, 1))
+netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Neutrophils", comparison = c(4, 3))
+netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Neutrophils", comparison = c(6, 5))
+
+
+
+netAnalysis_signalingChanges_scatter(cellchat, idents.use = "CD8 T cells", comparison = c(6, 5))
+netAnalysis_signalingChanges_scatter(cellchat, idents.use = "CD4 T cells", comparison = c(6, 5))
+netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Gamma delta T cells", comparison = c(6, 5))
+netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Mitotic T cells", comparison = c(6, 5))
+
+
+
+netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Platelets")
+netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Matrix fibroblasts")
+netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Pericytes")
+```
+
+```{r Total signaling Young vs. Old}
+rankNet(cellchat, mode = "comparison", stacked = T, comparison = c(1, 2)) +
+  scale_fill_manual(values = c("gray70", "forestgreen"))
+
+rankNet(cellchat, mode = "comparison", stacked = T, comparison = c(3, 4)) +
+  scale_fill_manual(values = c("gray70", "forestgreen"))
+
+rankNet(cellchat, mode = "comparison", stacked = T, comparison = c(5, 6)) +
+  scale_fill_manual(values = c("gray70", "forestgreen"))
+
+#ggsave("Figures/CellChat/Old_Young_split/01_InformationFlow_bar.pdf", width = 5, height = 10)
+
+### Check Faslg, Lifr, Il-6 (Old) and IFN-II (Young)
+```
+
+```{r Age-specific pathway signaling}
+# Faslg and Lifr only in Old, IFN-II only in Young
+
+netVisual_heatmap(object.list[[3]], signaling = "FASLG", color.heatmap = "Reds", title.name = paste("FASLG", "signaling -", names(object.list)[3]))
+netVisual_heatmap(object.list[[4]], signaling = "FASLG", color.heatmap = "Reds", title.name = paste("FASLG", "signaling -", names(object.list)[4]))
+
+
+
+
+netVisual_heatmap(object.list[[3]], signaling = "VEGF", color.heatmap = "Reds", title.name = paste("VEGF", "signaling -", names(object.list)[3]), measure = "weight")
+netVisual_heatmap(object.list[[4]], signaling = "VEGF", color.heatmap = "Reds", title.name = paste("VEGF", "signaling -", names(object.list)[4]), measure = "weight")
+
+netVisual_heatmap(object.list[[5]], signaling = "VEGF", color.heatmap = "Reds", title.name = paste("VEGF", "signaling -", names(object.list)[5]), measure = "weight")
+netVisual_heatmap(object.list[[6]], signaling = "VEGF", color.heatmap = "Reds", title.name = paste("VEGF", "signaling -", names(object.list)[6]), measure = "weight")
+
+
+netVisual_heatmap(object.list[[5]], signaling = "GDF", color.heatmap = "Reds", title.name = paste("GDF", "signaling -", names(object.list)[5]), measure = "weight")
+netVisual_heatmap(object.list[[6]], signaling = "GDF", color.heatmap = "Reds", title.name = paste("GDF", "signaling -", names(object.list)[6]), measure = "weight")
+
+
+
+
+netVisual_heatmap(object.list[[2]], signaling = "LIFR", color.heatmap = "Reds", title.name = paste("LIFR", "signaling -", names(object.list)[2]))
+# Platelets signaling to Myofibroblasts, Car4-hi endo, Car4-lo endo, Pericytes, Lipofibroblasts, Lymphatics, and matrix fibroblasts
+# Geiss and Salvatore et al. (10.1073/pnas.112338099) suggest that Lifr acts as a marker of influenza infection in the human lung epithelial cell line A549 infected with PR8
+  # Can't find any other papers studying Lifr in influenza
+### XYZ - Can we correlate Lifr expression with influenza transcript expression?
+DotPlot(Flu, features = c("Lif", "Lifr"))
+
+netVisual_heatmap(object.list[[2]], signaling = "IL6", color.heatmap = "Reds", title.name = paste("IL-6", "signaling -", names(object.list)[2]))
+netVisual_heatmap(object.list[[1]], signaling = "IL6", color.heatmap = "Reds", title.name = paste("IL-6", "signaling -", names(object.list)[1]))
+# Highly produced by platelets and neuroendocrine; some produced by matrix fibroblasts in Old but not Young
+# Acts mostly on myofibroblasts, club cells, platelets, and Krt79-hi AMs (but signaling is higher in Old vs. Young)
+# Acts on **DCs**, mesothelial, and lipofibroblasts only in young, not old
+DotPlot(Flu, features = c("Il6"), split.by = "Age")
+
+netVisual_heatmap(object.list[[1]], signaling = "IFN-II", color.heatmap = "Reds", title.name = paste("IFN-II", "signaling -", names(object.list)[1]))
+# As expected, IFNg production highest in NK cellsm acts most strongly on F13a1-hi monocytes, Cx3cr1-hi macrophages, and Krt79-hi AMs
+
+netVisual_heatmap(object.list[[2]], signaling = "COLLAGEN", color.heatmap = "Reds", title.name = paste("Collagen", "signaling -", names(object.list)[2]))
+netVisual_heatmap(object.list[[1]], signaling = "COLLAGEN", color.heatmap = "Reds", title.name = paste("Collagen", "signaling -", names(object.list)[1]))
+
+netVisual_heatmap(object.list[[2]], signaling = "CD48", color.heatmap = "Reds", title.name = paste("CD48", "signaling -", names(object.list)[2]))
+netVisual_heatmap(object.list[[1]], signaling = "CD48", color.heatmap = "Reds", title.name = paste("CD48", "signaling -", names(object.list)[1]))
+
+netVisual_heatmap(object.list[[2]], signaling = "ANGPT", color.heatmap = "Reds", title.name = paste("ANGPT", "signaling -", names(object.list)[2]))
+netVisual_heatmap(object.list[[1]], signaling = "ANGPT", color.heatmap = "Reds", title.name = paste("ANGPT", "signaling -", names(object.list)[1]))
+# Angiopoietins bind to Tie1 and Tie2 (aka TEK)
+
+netVisual_heatmap(object.list[[2]], signaling = "ANGPTL", color.heatmap = "Reds", title.name = paste("ANGPTL", "signaling -", names(object.list)[2]))
+netVisual_heatmap(object.list[[1]], signaling = "ANGPTL", color.heatmap = "Reds", title.name = paste("ANGPTL", "signaling -", names(object.list)[1]))
+# ANGPTL - angiopoietin like; ANGPTL1 (aka angioarrestin) binds LILRB2, *inhibits* angiogenesis
+# Other ANGPTL proteins promote antiogenesis (ANGPTL2) or are involved in fatty acid metabolism regulation by inihbiting LPL (ANGPTL3/4/8)
+# Increased production of ANGPTL ligands by myofibroblasts and mesothelial cells in Old
+
+netVisual_heatmap(object.list[[2]], signaling = "TNF", color.heatmap = "Reds", title.name = paste("TNF", "signaling -", names(object.list)[2]))
+netVisual_heatmap(object.list[[1]], signaling = "TNF", color.heatmap = "Reds", title.name = paste("TNF", "signaling -", names(object.list)[1]))
+
+netVisual_heatmap(object.list[[2]], signaling = "CXCL", color.heatmap = "Reds", title.name = paste("CXCL", "signaling -", names(object.list)[2]))
+netVisual_heatmap(object.list[[1]], signaling = "CXCL", color.heatmap = "Reds", title.name = paste("CXCL", "signaling -", names(object.list)[1]))
+
+netVisual_heatmap(object.list[[2]], signaling = "CCL", color.heatmap = "Reds", title.name = paste("CCL", "signaling -", names(object.list)[2]))
+netVisual_heatmap(object.list[[1]], signaling = "CCL", color.heatmap = "Reds", title.name = paste("CCL", "signaling -", names(object.list)[1]))
+
+netVisual_heatmap(object.list[[2]], signaling = "NKG2D", color.heatmap = "Reds", title.name = paste("NKG2D", "signaling -", names(object.list)[2]))
+netVisual_heatmap(object.list[[1]], signaling = "NKG2D", color.heatmap = "Reds", title.name = paste("NKG2D", "signaling -", names(object.list)[1]))
+
+netVisual_heatmap(object.list[[2]], signaling = "CSF", color.heatmap = "Reds", title.name = paste("CSF", "signaling -", names(object.list)[2]))
+netVisual_heatmap(object.list[[1]], signaling = "CSF", color.heatmap = "Reds", title.name = paste("CSF", "signaling -", names(object.list)[1]))
+```
+
+```{r}
+ht1 <- netAnalysis_signalingRole_heatmap(object.list[[1]], pattern = "outgoing", signaling = pathway.union, title = names(object.list)[1], width = 15, height = 20)
+ht2 <- netAnalysis_signalingRole_heatmap(object.list[[2]], pattern = "outgoing", signaling = pathway.union, title = names(object.list)[2], width = 15, height = 20)
+draw(ht1 + ht2, ht_gap = unit(0.5, "cm"))
+
+rm(ht1, ht2)
+```
+
+```{r Platelet signaling}
+# Platelets signaling to neutrophils
+netVisual_bubble(cellchat, sources.use = 27, targets.use = c(4, 19, 25), comparison = c(1, 2), max.dataset = 2, title.name = "Increased signaling in Old", angle.x = 45, remove.isolate = T)
+# Cxcl2-Cxcr2 higher in Old for all clusters
+# Cxcl12-Cxcr4 only present in Old, not at all in Young
+# Ccl6-Ccr1 only in Pcna-hi neutrophils
+# Tnf-Tnfrsf1a/b only in Old, not at all in Young
+# Il1b-Il1r2 increased in Old for all clusters
+# Ccl3-Ccr1 only seen in Old, not in Young
+
+netVisual_bubble(cellchat, sources.use = 27, targets.use = c(4, 19, 25), comparison = c(1, 2), max.dataset = 1, title.name = "Increased signaling in Young", angle.x = 45, remove.isolate = T)
+
+# Platelet signaling to endothelium (excluding cluster 17)
+netVisual_bubble(cellchat, sources.use = 27, targets.use = c(2, 11), comparison = c(1, 2), max.dataset = 2, title.name = "Increased signaling in Old", angle.x = 45, remove.isolate = T)
+# App-Cd74 only present (and increased in Old) in Car4-lo
+# Col4a1-Itga3/Itgb1 and Col4a1-Itga2/Itgb1 only seen in Car4-hi endothelium
+# Ccl3/4-Ackr2 only seen in Car4-hi
+# Tnf-Tnfrsf1a only in Old
+
+netVisual_bubble(cellchat, sources.use = 27, targets.use = c(2, 11), comparison = c(1, 2), max.dataset = 1, title.name = "Increased signaling in Young", angle.x = 45, remove.isolate = T)
+
+# Platelet signaling to AMs
+netVisual_bubble(cellchat, sources.use = 27, targets.use = c(1, 16, 21), comparison = c(1, 2), max.dataset = 2, title.name = "Increased signaling in Old", angle.x = 45, remove.isolate = T)
+# App-Cd74 increased in Old in all three AM clusters
+# Ccl6/9-Ccr1 increased in Old in Krt79-hi
+# Ccl3-Ccr1 increased in Old in standard AM and Krt79-hi AM, but not Fabp5-hi AM
+# Vegfa-Vegfr1 only present (and increased in Old) in Krt79-hi
+
+netVisual_bubble(cellchat, sources.use = 27, targets.use = c(1, 16, 21), comparison = c(1, 2), max.dataset = 1, title.name = "Increased signaling in Young", angle.x = 45, remove.isolate = T)
+```
+
+```{r Endothelial signaling}
+rankNet(cellchat, mode = "comparison", stacked = F, do.stat = TRUE, comparison = c(6:1), targets.use = c("Endothelial cells"), # Need to flip order due to coord_flip
+        title = "Signaling in ECs", do.flip = F) +
+  scale_fill_manual(name = c(""),
+                    labels = c("Day 0 Young", "Day 0 Aged", "Day 3 Young", "Day 3 Aged", "Day 9 Young", "Day 9 Aged"), # Need to reverse because RankNet plots backwards
+                    values = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) + # Need to reverse because RankNet plots backwards
+  scale_x_discrete(lim = c("VEGF")) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5), axis.title.y = element_text(size = 10)) +
+  guides(fill = guide_legend(reverse = F))
+
+rankNet(cellchat, mode = "comparison", stacked = F, do.stat = TRUE, comparison = c(6:1), targets.use = c("Car4+ endothelial cells"), # Need to flip order due to coord_flip
+        title = "Signaling in Car4+ ECs", do.flip = F) +
+  scale_fill_manual(name = c(""),
+                    labels = c("Day 0 Young", "Day 0 Aged", "Day 3 Young", "Day 3 Aged", "Day 9 Young", "Day 9 Aged"), # Need to reverse because RankNet plots backwards
+                    values = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) + # Need to reverse because RankNet plots backwards
+  scale_x_discrete(lim = c("VEGF")) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5), axis.title.y = element_text(size = 10)) +
+  guides(fill = guide_legend(reverse = F))
+
+
+# Endothelial Tnf signaling - Irf1 up in day 9, esp. aged, which is known to be promoted by Tnf-Tnfr2 signaling in endothelial cells (10.1016/j.immuni.2013.01.012)
+netVisual_bubble(cellchat, targets.use = "Endothelial cells", comparison = c(3, 4), max.dataset = 4, title.name = "Increased signaling in Old", angle.x = 45, remove.isolate = T, signaling = "TNF")
+# Not detected
+
+
+
+# Endothelial signaling to platelets (Day 9)
+netVisual_bubble(cellchat, sources.use = c("Car4+ endothelial cells", "Endothelial cells"), targets.use = "Platelets", comparison = c(5, 6), max.dataset = 6, title.name = "Increased signaling in Old", angle.x = 45, remove.isolate = T)
+# App-Cd74 increased in Car4-hi
+# Icam1-Itgam/Itgb2 increased in both Endo clusters
+# Icam1-Itgal/Itgb2 increased in both Endo clusters
+# Dll1-Notch1/2 only found in Old in both Endo clusters
+
+
+
+
+
+
+netVisual_bubble(cellchat, sources.use = c(2, 11), targets.use = 27, comparison = c(1, 2), max.dataset = 1, title.name = "Increased signaling in Young", angle.x = 45, remove.isolate = T)
+# Cd34-Selp increased in Young specficially in Car4-hi
+
+# Endothelial signaling to neutrophils
+netVisual_bubble(cellchat, sources.use = c(2, 11), targets.use = c(4, 19, 25), comparison = c(1, 2), max.dataset = 2, title.name = "Increased signaling in Old", angle.x = 45, remove.isolate = T)
+# Cxcl12-Cxcr4 increased in Old from Car4-lo to standard neutrophils and S100a4-hi, but not present in Car4-hi Endo or Pcna-hi neutro
+# Bst2-Pira2 only present in Car4-lo/hi interacting with Pcna-hi neutro
+
+# To T cells
+netVisual_bubble(cellchat, sources.use = c(2, 11), targets.use = c("T cells"), comparison = c(1, 2), max.dataset = 2, title.name = "Increased signaling in Old", angle.x = 45, remove.isolate = T)
+# ggsave("Figures/CellChat/Old_Young_split/")
+netVisual_bubble(cellchat, sources.use = c(2, 11), targets.use = c("T cells"), comparison = c(1, 2), max.dataset = 1, title.name = "Increased signaling in Young", angle.x = 45, remove.isolate = T)
+# Increased MHC presentation in Young, increased chemotaxis (Cxcl16-Cxcr6, Cxcl12-Cxcr4) and vascular binding/transcytosis in Old (Icam-Spn/Itgal)
+```
+
+```{r Car4 Endothelial signaling}
+netVisual_heatmap(object.list[[5]], signaling = "VEGF",
+                  color.heatmap = "Reds", title.name = c("VEGF signaling - Day 9 Young"),
+                  measure = "weight", remove.isolate = F)
+netVisual_heatmap(object.list[[6]], signaling = "VEGF",
+                  color.heatmap = "Reds", title.name = c("VEGF signaling - Day 9 Aged"),
+                  measure = "weight", remove.isolate = F)
+
+
+rankNet(cellchat, mode = "comparison", stacked = F, do.stat = TRUE, comparison = c(6:1), targets.use = c("Endothelial cells"), # Need to flip order due to coord_flip
+        title = "Signaling in ECs", do.flip = F) +
+  scale_fill_manual(name = c(""),
+                    labels = c("Day 0 Young", "Day 0 Aged", "Day 3 Young", "Day 3 Aged", "Day 9 Young", "Day 9 Aged"), # Need to reverse because RankNet plots backwards
+                    values = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) + # Need to reverse because RankNet plots backwards
+  scale_x_discrete(lim = c("VEGF")) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5), axis.title.y = element_text(size = 10)) +
+  guides(fill = guide_legend(reverse = F))
+
+rankNet(cellchat, mode = "comparison", color.use = c("darkgreen", "gray20"), stacked = T, do.stat = TRUE, comparison = c(5, 6), targets.use = c("Car4+ endothelial cells"),
+        title = expression("Signaling in Car4" ^ "+" ~ "endothelial cells"), do.flip = T) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5), axis.title.y = element_text(size = 10)) +
+  guides(fill = guide_legend(reverse = F))
+
+netVisual_diffInteraction(cellchat, comparison = c(5, 6), targets.use = c("Car4+ endothelial cells"))
+netVisual_aggregate(object.list[[5]], signaling = "VEGF", targets.use = "Car4+ endothelial cells")
+netVisual_aggregate(object.list[[6]], signaling = "VEGF", targets.use = "Car4+ endothelial cells")
+
+netVisual_aggregate(object.list[[5]], signaling = "CCL", targets.use = "Car4+ endothelial cells")
+netVisual_aggregate(object.list[[6]], signaling = "CCL", targets.use = "Car4+ endothelial cells")
+
+
+
+netVisual_bubble(object.list[[5]], targets.use = "Car4+ endothelial cells", title.name = "Car4+ VEGF - Day 9 Young", angle.x = 45, remove.isolate = T, signaling = "VEGF")
+netVisual_bubble(object.list[[6]], targets.use = "Car4+ endothelial cells", title.name = "Car4+ VEGF - Day 9 Aged", angle.x = 45, remove.isolate = T, signaling = "VEGF")
+
+
+netVisual_bubble(cellchat, targets.use = "Car4+ endothelial cells", comparison = c(3, 4), max.dataset = 3, title.name = "Increased signaling in Young", angle.x = 45, remove.isolate = T, signaling = "VEGF")
+
+netVisual_bubble(cellchat, targets.use = "Car4+ endothelial cells", comparison = c(5, 6), max.dataset = 5, title.name = "Increased signaling in Young", angle.x = 45, remove.isolate = T, signaling = "VEGF")
+
+netVisual_bubble(cellchat, comparison = c(5, 6), max.dataset = 6, title.name = "Increased signaling in Young", angle.x = 45, remove.isolate = T, signaling = "VEGF")
+
+
+netVisual_bubble(object.list[[5]], signaling = c("CCL"), targets.use = c("Car4+ endothelial cells"), angle.x = 45)
+netVisual_bubble(object.list[[6]], signaling = c("CCL"), targets.use = c("Car4+ endothelial cells"), angle.x = 45)
+netVisual_bubble(cellchat, signaling = c("CCL"), comparison = c(5, 6), targets.use = c("Car4+ endothelial cells"), angle.x = 45)
+
+netVisual_bubble(object.list[[5]], sources.use = c("Matrix fibroblasts"), targets.use = c("Car4+ endothelial cells"), angle.x = 45)
+```
+
+```{r AM signaling}
+### XYZ - check GM-CSF signaling to AMs
+# Can't find GM-CSF as a pathway in CellChat
+
+rankNet(cellchat, mode = c("comparison"), sources.use = "Alveolar macrophages", comparison = c(3, 4), stacked = T, color.use = c("palegreen3", "gray50")) +
+  scale_fill_manual(labels = c("Day 3 Aged", "Day 3 Young"), values = c("gray50", "palegreen3")) +
+  labs(title = "Signaling from AMs - Day 3") +
+  theme(legend.title = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+ggsave("Figures_CellChat_RJB/07_AM_Signaling_D3_Out_Bar.pdf")
+
+plotGeneExpression(object.list[[3]], signaling = "EGF")
+plotGeneExpression(object.list[[4]], signaling = "EGF")
+
+### Check EGF signaling from AMs to epithelial (focus on Ereg as the ligand, up in D3 Aged AMs)
+netVisual_heatmap(object.list[[3]], signaling = "EGF",
+                  color.heatmap = "Reds", title.name = c("EGF signaling - Day 3 Young"),
+                  measure = "weight", remove.isolate = F)
+### EGF signaling not detected in Day 3 Aged
+netVisual_heatmap(object.list[[4]], signaling = "EGF",
+                  color.heatmap = "Reds", title.name = c("EGF signaling - Day 3 Aged"),
+                  measure = "weight", remove.isolate = F)
+
+
+# Total EGF signaling in D3 Young
+netVisual_bubble(object.list[[3]], angle.x = 45, remove.isolate = T, signaling = "EGF")
+netVisual_bubble(object.list[[3]], angle.x = 45, remove.isolate = T, signaling = "EGF", sources.use = "Alveolar macrophages")
+
+
+netVisual_bubble(object.list[[3]], sources.use = "Alveolar macrophages", signaling = "EGF",
+                 title.name = "EGF signaling from AMs - Day 3",
+                 angle.x = 45, remove.isolate = F,
+                 color.text = c("palegreen3")) +
+  scale_x_discrete(
+    labels = c("Matrix fibroblasts (Young)", "Mesothelial cells (Young)", "AT1 cells (Young)")) +
+  theme(axis.text.x = element_text(color = "palegreen3"))
+ggsave("Figures_CellChat_RJB/07_AM_EGF_D3_CellChat.pdf", width = 5, height = 3)
+
+
+netVisual_bubble(object.list[[5]], angle.x = 45, remove.isolate = T, signaling = "EGF")
+netVisual_bubble(object.list[[6]], angle.x = 45, remove.isolate = T, signaling = "EGF")
+
+
+
+netVisual_bubble(cellchat, sources.use = "Alveolar macrophages", angle.x = 45, comparison = c(5, 6), remove.isolate = T, signaling = "COMPLEMENT")
+```
+
+```{r Myofibroblast signaling}
+# To platelets
+netVisual_bubble(cellchat, sources.use = c(12), targets.use = c(27), comparison = c(1, 2), max.dataset = 2, title.name = "Increased signaling in Old", angle.x = 45, remove.isolate = T)
+netVisual_bubble(cellchat, sources.use = c(12), targets.use = c(27), comparison = c(1, 2), max.dataset = 2, title.name = "Increased signaling in Old", angle.x = 45, remove.isolate = T)
+
+# Are these really platelets?
+```
+
+```{r Neutrophil signaling}
+netVisual_bubble(cellchat, targets.use = c("Neutrophils"), comparison = c(3, 4), max.dataset = 3, title.name = "Increased signaling in Young - Day 3", angle.x = 45, remove.isolate = T, signaling = c("CXCL", "CCL"))
+netVisual_bubble(cellchat, targets.use = c("Neutrophils"), comparison = c(3, 4), max.dataset = 4, title.name = "Increased signaling in Aged - Day 3", angle.x = 45, remove.isolate = T, signaling = c("CXCL", "CCL"))
+
+netVisual_bubble(cellchat, targets.use = c("Neutrophils"), comparison = c(5, 6), max.dataset = 5, title.name = "Increased signaling in Young - Day 9", angle.x = 45, remove.isolate = T, signaling = c("CXCL", "CCL"))
+netVisual_bubble(cellchat, targets.use = c("Neutrophils"), comparison = c(5, 6), max.dataset = 6, title.name = "Increased signaling in Aged - Day 9", angle.x = 45, remove.isolate = T, signaling = c("CXCL", "CCL"))
+
+
+
+### Technical note - need to manually include sources.use (even if you just repeat all the cell types already shown) in order to get the graph to align poroperly when remove.isolate = F
+# testggplot <- netVisual_bubble(cellchat,
+netVisual_bubble(cellchat,
+                 signaling = c("CXCL"),
+                 sources.use = c("Alveolar macrophages", "Endothelial cells", "AT2 cells", "Neutrophils", "Myofibroblasts", "Matrix fibroblasts", "Macrophages", "Monocytes", "Mesothelial cells", "cDCs", "Vwf+ endothelial cells", "Mitotic cells", "Interstitial macrophages", "Pericytes", "Platelets", "Lymphatic endothelial cells", "Suppressive neutrophils", "Mast cells"),
+                 targets.use = c("Neutrophils"),
+                 comparison = c(3, 4),
+                 title.name = "CXCL chemokine signaling in Neutrophils - Day 3",
+                 angle.x = 45, remove.isolate = F,
+                 color.text = c("palegreen3", "gray50")) +
+  scale_x_discrete(labels = paste0(
+      rep(c("Alveolar macrophages", "Endothelial cells", "AT2 cells", "Neutrophils", "Myofibroblasts", "Matrix fibroblasts", "Macrophages", "Monocytes", "Mesothelial cells", "cDCs", "Vwf+ endothelial cells", "Mitotic cells", "Interstitial macrophages", "Pericytes", "Platelets", "Lymphatic endothelial cells", "Suppressive neutrophils", "Mast cells"), each = 2),
+      rep(c(" (Young)", " (Aged)"), 17)))
+ggsave("Figures_CellChat_RJB/03_Neutrophils_CXCL_D3_Bubble.pdf", width = 10, height = 3.5)
+
+
+
+
+netVisual_bubble(cellchat,
+                 signaling = c("CXCL"),
+                 sources.use = c("Alveolar macrophages", "Endothelial cells", "Neutrophils", "Myofibroblasts", "Matrix fibroblasts", "Mitotic cells", "Interstitial macrophages", "Pericytes", "Platelets", "Suppressive neutrophils", "Mast cells", "Goblet cells"),
+                 targets.use = c("Neutrophils"),
+                 comparison = c(5, 6), max.dataset = 6,
+                 title.name = "CXCL chemokine signaling in Neutrophils - Day 9",
+                 angle.x = 45, remove.isolate = F,
+                 color.text = c("darkgreen", "gray20")) +
+  scale_x_discrete(labels = paste0(
+      rep(c("Alveolar macrophages", "Endothelial cells", "Neutrophils", "Myofibroblasts", "Matrix fibroblasts", "Mitotic cells", "Interstitial macrophages", "Pericytes", "Platelets", "Suppressive neutrophils", "Mast cells", "Goblet cells"), each = 2),
+      rep(c(" (Young)", " (Aged)"), 12)))
+ggsave("Figures_CellChat_RJB/03_Neutrophils_CXCL_D9_Aged_Bubble.pdf", width = 8, height = 3.5)
+
+netVisual_bubble(cellchat,
+                 signaling = c("CXCL"),
+                 sources.use = c("Alveolar macrophages", "Endothelial cells", "Neutrophils", "Myofibroblasts", "Matrix fibroblasts", "Mitotic cells", "Interstitial macrophages", "Pericytes", "Platelets", "Suppressive neutrophils", "Mast cells", "Goblet cells"),
+                 targets.use = c("Neutrophils"),
+                 comparison = c(5, 6),
+                 title.name = "CXCL chemokine signaling in Neutrophils - Day 9",
+                 angle.x = 45, remove.isolate = F,
+                 color.text = c("darkgreen", "gray20")) +
+  scale_x_discrete(labels = paste0(
+      rep(c("Alveolar macrophages", "Endothelial cells", "Neutrophils", "Myofibroblasts", "Matrix fibroblasts", "Mitotic cells", "Interstitial macrophages", "Pericytes", "Platelets", "Suppressive neutrophils", "Mast cells", "Goblet cells"), each = 2),
+      rep(c(" (Young)", " (Aged)"), 12)))
+ggsave("Figures_CellChat_RJB/03_Neutrophils_CXCL_D9_Bubble.pdf", width = 10, height = 3.5)
+
+### The only Neutrophil CXCL signaling enriched in Young on Day 9 is Cxcl12-Cxcr4 from platelets
+
+netVisual_bubble(cellchat,
+                 signaling = c("CXCL", "CCL"),
+                 sources.use = c("Alveolar macrophages", "Neutrophils", "Mitotic cells", "Interstitial macrophages", "Suppressive neutrophils"),
+                 targets.use = c("Neutrophils"),
+                 comparison = c(5, 6), max.dataset = 5,
+                 title.name = "Chemokine signaling in Neutrophils - Day 9",
+                 angle.x = 45, remove.isolate = T,
+                 color.text = c("darkgreen", "gray20")) +
+  scale_x_discrete(labels = paste0(
+      rep(c("Alveolar macrophages", "Neutrophils", "Mitotic cells", "Interstitial macrophages", "Suppressive neutrophils"), each = 2),
+      rep(c(" (Young)", " (Aged)"), 5)))
+ggsave("Figures_CellChat_RJB/03_Neutrophils_CXCL_CCL_D9_Young_Bubble.pdf", width = 6, height = 3.5)
+
+
+# Day 3 - Young uses CXCL signaling, Old uses CCL
+# Day 9 - Young uses CCL signaling, Old uses CXCL
+
+netVisual_chord_gene(cellchat, signaling = c("CXCL", "CCL"), targets.use = c("Neutrophils"), title.name = paste0("Chemokine", " signaling network - "))
+
+netVisual_chord_gene(object.list[[3]], signaling = "CXCL", title.name = paste0("CXCL", " signaling network - ", names(object.list)[3]), targets.use = c("Neutrophils"))
+netVisual_chord_gene(object.list[[4]], signaling = "CXCL", title.name = paste0("CXCL", " signaling network - ", names(object.list)[4]), targets.use = c("Neutrophils"))
+
+netVisual_chord_gene(object.list[[3]], signaling = "CXCL", targets.use = c("Neutrophils"))
+netVisual_chord_gene(object.list[[4]], signaling = "CXCL", targets.use = c("Neutrophils"))
+netVisual_chord_gene(object.list[[5]], signaling = "CXCL", targets.use = c("Neutrophils"))
+netVisual_chord_gene(object.list[[6]], signaling = "CXCL", targets.use = c("Neutrophils"))
+
+netVisual_chord_gene(object.list[[3]], signaling = "CCL", targets.use = c("Neutrophils"))
+netVisual_chord_gene(object.list[[4]], signaling = "CCL", targets.use = c("Neutrophils"))
+netVisual_chord_gene(object.list[[5]], signaling = "CCL", targets.use = c("Neutrophils"))
+netVisual_chord_gene(object.list[[6]], signaling = "CCL", targets.use = c("Neutrophils"))
+
+
+
+netVisual_heatmap(cellchat, comparison = c(3, 4), measure = "weight", slot.name = "netP", targets.use = "Neutrophils")
+
+netVisual_heatmap(cellchat, comparison = c(5, 6), measure = "weight", slot.name = "netP", targets.use = "Neutrophils")
+
+netVisual_heatmap(cellchat, comparison = c(5, 6), measure = "weight", signaling = "CXCL")
+
+# rankNet(cellchat, mode = "comparison", stacked = F, do.stat = TRUE, comparison = c(3, 4), targets.use = c("Neutrophils"),
+#         title = "Signaling in Neutrophils - Day 3", tol = 1) + # Set tolerance to 1 to prevent axis labels from becoming colored
+#   scale_fill_manual(name = c(""), labels = c("Day 3 Young", "Day 3 Aged"), values = c("forestgreen", "gray70"))
+# 
+# rankNet(cellchat, mode = "comparison", stacked = F, do.stat = TRUE, comparison = c(5, 6), targets.use = c("Neutrophils"),
+#         title = "Signaling in Neutrophils - Day 9", tol = 1, thresh = 0.05) + # Set tolerance to 1 to prevent axis labels from becoming colored
+#   scale_fill_manual(name = c(""), labels = c("Day 9 Young", "Day 9 Aged"), values = c("forestgreen", "gray70"))
+# 
+# rankNet(cellchat, mode = "comparison", stacked = F, do.stat = TRUE, comparison = c(5, 6), targets.use = c("Neutrophils"),
+#         title = "Signaling in Neutrophils - Day 9", tol = 1, cutoff.pvalue = 0.00001, thresh = 0.000001) + # Set tolerance to 1 to prevent axis labels from becoming colored
+#   scale_fill_manual(name = c(""), labels = c("Day 9 Young", "Day 9 Aged"), values = c("forestgreen", "gray70"))
+
+rankNet(cellchat, mode = "comparison", stacked = F, do.stat = TRUE, comparison = c(1, 2, 3, 4, 5, 6), targets.use = c("Neutrophils"),
+        title = "Signaling in Neutrophils") +
+  # scale_fill_manual(name = c(""),
+  #                   labels = c("Day 0 Young", "Day 0 Aged", "Day 3 Young", "Day 3 Aged", "Day 9 Young", "Day 9 Aged"),
+  #                   values = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) +
+  scale_x_discrete(lim = c("ICAM", "LAMININ", "IL1", "COLLAGEN", "CCL", "CXCL", "FN1", "SELPLG"))
+# Remove categories with informtation flow < 10 for all samples for clarity; hard to do automatically, so filtering manually
+
+# Remove categories with informtation flow < 10 for all samples for clarity; hard to do automatically, so filtering manually
+rankNet(cellchat, mode = "comparison", stacked = F, do.stat = TRUE, comparison = c(1:6), targets.use = c("Neutrophils"),
+        title = "Signaling in Neutrophils", ) +
+  scale_fill_manual(name = c(""),
+                    labels = rev(c("Day 0 Young", "Day 0 Aged", "Day 3 Young", "Day 3 Aged", "Day 9 Young", "Day 9 Aged")), # Need to reverse because RankNet plots backwards
+                    values = rev(c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20"))) + # Need to reverse because RankNet plots backwards
+  scale_x_discrete(lim = c("ICAM", "LAMININ", "IL1", "COLLAGEN", "CCL", "CXCL", "FN1", "SELPLG"))
+ggsave("Figures_CellChat_RJB/03_Neutrophils_rankNetInfoFlow.pdf", width = 6, height = 4)
+
+# Only showing CXCL and CCL signaling
+rankNet(cellchat, mode = "comparison", stacked = F, do.stat = TRUE, comparison = c(6:1), targets.use = c("Neutrophils"), # Need to flip order due to coord_flip
+        title = "Signaling in Neutrophils", do.flip = F) +
+  scale_fill_manual(name = c(""),
+                    labels = c("Day 0 Young", "Day 0 Aged", "Day 3 Young", "Day 3 Aged", "Day 9 Young", "Day 9 Aged"), # Need to reverse because RankNet plots backwards
+                    values = c("mediumspringgreen", "gray 80", "palegreen3", "gray50", "darkgreen", "gray20")) + # Need to reverse because RankNet plots backwards
+  scale_x_discrete(lim = c("CXCL", "CCL")) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5), axis.title.y = element_text(size = 10)) +
+  guides(fill = guide_legend(reverse = F))
+ggsave("Figures_CellChat_RJB/03_Neutrophils_rankNetInfoFlow_CXCL_CCL.pdf", width = 6, height = 3.75)
+
+
+# Surprisingly, CCL signaling is elevated on Day 0 in Old
+netVisual_bubble(cellchat, targets.use = c("Neutrophils"), comparison = c(1, 2), max.dataset = 2, title.name = "Increased signaling in Aged - Day 0", angle.x = 45, remove.isolate = T, signaling = c("CCL"))
+
+
+netVisual_bubble(cellchat, sources.use = c("Myofibroblasts", "Alveolar macrophages"), targets.use = c("Neutrophils"), comparison = c(3, 4), max.dataset = 3, title.name = "Increased signaling in Young - Day 3", angle.x = 45, remove.isolate = T)
+
+netVisual_bubble(cellchat, sources.use = c("Myofibroblasts", "Alveolar macrophages"), targets.use = c("Neutrophils"), comparison = c(3, 4), max.dataset = 4, title.name = "Increased signaling in Aged - Day 3", angle.x = 45, remove.isolate = T)
+```
+```{r}
+netVisual_bubble(cellchat,
+                 signaling = c("CXCL"),
+                 targets.use = c("Neutrophils"),
+                 comparison = c(3, 4),
+                 title.name = "CXCL chemokine signaling in Neutrophils - Day 3",
+                 angle.x = 45, remove.isolate = F,
+                 color.text = c("palegreen3", "gray50"))
+
+netVisual_bubble(cellchat,
+                 signaling = c("CXCL"),
+                 sources.use = c("Alveolar macrophages", "Endothelial cells", "Neutrophils", "Myofibroblasts", "Matrix fibroblasts", "Mitotic cells", "Interstitial macrophages", "Pericytes", "Platelets", "Suppressive neutrophils", "Mast cells", "Goblet cells"),
+                 targets.use = c("Neutrophils"),
+                 comparison = c(5, 6), max.dataset = 6,
+                 title.name = "CXCL chemokine signaling in Neutrophils - Day 9",
+                 angle.x = 45, remove.isolate = T,
+                 color.text = c("darkgreen", "gray20")) + 
+
+  scale_x_discrete(labels = paste0(
+      rep(c( "Endothelial cells (Young)", "Endothelial cells (Aged)", "Alveolar macrophages (Young)", "Interstitial macrophages (Aged)","Alveolar macrophages (Aged)", "Neutrophils (Young)", "Neutrophils (Aged)", "Matrix fibroblasts (Young)","Matrix fibroblasts (Aged)","Myofibroblasts (Young)","Myofibroblasts (Aged)","Platelets (Young)","Platelets (Aged)","Suppressive neutrophils (Young)","Suppressive neutrophils (Aged)", "Pericytes (Young)","Pericytes (Aged)","Mast cells (Young)", "Mast cells (Aged)", "Mitotic cells", "Interstitial macrophages",   "Goblet cells"), each = 1)))
+ggsave("Figures_CellChat_RJB/03_Neutrophils_CXCL_D9_Bubble_Updated.pdf", width = 10, height = 3.5)
+
+
+
+scale_x_discrete(labels = paste0(
+      rep(c( "Endothelial cells", "Alveolar macrophages", "Neutrophils",  "Matrix fibroblasts","Myofibroblasts","Platelets","Suppressive neutrophils", "Pericytes","Mast cells", "Mitotic cells", "Interstitial macrophages",   "Goblet cells"), each = 1)))
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r Monocyte signaling}
+# To NK cells
+netVisual_bubble(cellchat, sources.use = c(9), targets.use = c(19), comparison = c(1, 2), max.dataset = 2, title.name = "Increased signaling in Old", angle.x = 45, remove.isolate = T)
+# CD48-2B4 (Cd244a),, Il1b-Il1r2 up in Old
+
+netVisual_bubble(cellchat, sources.use = c(9), targets.use = c(19), comparison = c(1, 2), max.dataset = 1, title.name = "Increased signaling in Young", angle.x = 45, remove.isolate = T)
+```
+
+```{r Epithelial signaling}
+# To endothelial (esp. Car4+ endo, which signals via Vegf)
+netVisual_bubble(cellchat, targets.use = c("Car4+ endothelial cells"), comparison = c(3, 4), max.dataset = 3, title.name = "Increased signaling in Day 3 Young", angle.x = 45, remove.isolate = F, signaling = "VEGF")
+netVisual_bubble(cellchat, targets.use = c("Car4+ endothelial cells"), comparison = c(5, 6), max.dataset = 5, title.name = "Increased signaling in Day 9 Young", angle.x = 45, remove.isolate = F, signaling = "VEGF")
+
+
+netVisual_bubble(cellchat, comparison = c(1, 2), max.dataset = 2, title.name = "Increased signaling in Day 0 Aged", angle.x = 45, remove.isolate = F, signaling = "MHC-I")
+
+
+netVisual_bubble(cellchat, sources.use = c("Platelets", "Myofibroblasts", "Endothelial cells", "Alveolar macrophages"), targets.use = c("Neutrophils"), comparison = c(3, 4), title.name = "CXCL chemkine signaling - Day 3", angle.x = 45, remove.isolate = F, signaling = c("CXCL"))
+netVisual_bubble(cellchat, sources.use = c("Platelets", "Myofibroblasts", "Endothelial cells", "Alveolar macrophages"), targets.use = c("Neutrophils"), comparison = c(5, 6), title.name = "CXCL chemkine signaling - Day 9", angle.x = 45, remove.isolate = F, signaling = c("CXCL"))
+
+
+netVisual_bubble(cellchat, comparison = c(5, 6), max.dataset = 6, title.name = "Increased signaling in Day 3 Young", angle.x = 45, remove.isolate = F, signaling = "VEGF")
+
+
+
+netVisual_bubble(cellchat, targets.use = c("Car4+ endothelial cells"), comparison = c(3, 4), max.dataset = 3, title.name = "Increased signaling in Day 9 Young", angle.x = 45, remove.isolate = F)
+
+
+netVisual_bubble(cellchat, sources.use = c("Pericytes", "Platelets", "Myofibroblasts"), targets.use = c("Car4+ endothelial cells"), comparison = c(5, 6), max.dataset = 5, title.name = "Increased signaling in Day 9 Young", angle.x = 45, remove.isolate = F, signaling = "VEGF")
+netVisual_bubble(cellchat, sources.use = c("Pericytes", "Platelets", "Myofibroblasts"), targets.use = c("Car4+ endothelial cells"), comparison = c(5, 6), max.dataset = 6, title.name = "Increased signaling in Day 9 Young", angle.x = 45, remove.isolate = F, signaling = "VEGF")
+
+
+
+netVisual_bubble(cellchat, targets.use = c("Neutrophils"), comparison = c(3, 4), max.dataset = 3, title.name = "Increased signaling in Day 3 Young", angle.x = 45, remove.isolate = F, signaling = c("CXCL", "CCL"))
+
+netVisual_bubble(cellchat, targets.use = c("Neutrophils"), comparison = c(3, 4), max.dataset = 4, title.name = "Increased signaling in Day 3 Aged", angle.x = 45, remove.isolate = F, signaling = c("CXCL", "CCL"))
+
+netVisual_bubble(cellchat, targets.use = c("Neutrophils"), comparison = c(5, 6), max.dataset = 5, title.name = "Increased signaling in Day 9 Young", angle.x = 45, remove.isolate = F, signaling = c("CXCL", "CCL"))
+
+netVisual_bubble(cellchat, targets.use = c("Neutrophils"), comparison = c(5, 6), max.dataset = 6, title.name = "Increased signaling in Day 9 Aged", angle.x = 45, remove.isolate = F, signaling = c("CXCL", "CCL"))
+
+# Young tends to recruit neutrophils via Ccl6, Old via Ccl5
+# Cxcl2-Cxcr2 enriched in Young on D3 but in Old on D9
+
+
+
+netVisual_bubble(cellchat, sources.use = c(3, 7, 8, 12, 14, 24), targets.use = c(2, 11), comparison = c(1, 2), max.dataset = 1, title.name = "Increased signaling in Young", angle.x = 45, remove.isolate = F)
+
+# Narrow down to VEGF only (enriched in Young, so won't see in Old using this plot type)
+# Not including pneumonocytes
+netVisual_bubble(cellchat, sources.use = c(3, 7, 8, 12), targets.use = c(2, 11), comparison = c(1, 2), max.dataset = 1, title.name = "VEGF pathways enriched in Young", remove.isolate = F, signaling = "VEGF") +
+  theme(axis.text.x = element_text(angle = 52.5, vjust = 1))
+# ggsave("Figures/CellChat/Old_Young_split/06_Bubble_VEGF_Epi_Endo.pdf", width = 9, height = 4.5)
+
+# Only show myofibroblasts and pneumocytes for senders
+netVisual_bubble(cellchat, sources.use = c(12, 24), targets.use = c(2, 11), comparison = c(1, 2), max.dataset = 1, title.name = "VEGF pathways enriched in Young", remove.isolate = F, signaling = "VEGF") +
+  theme(axis.text.x = element_text(angle = 52.5, vjust = 1))
+# ggsave("Figures/CellChat/Old_Young_split/06_Bubble_VEGF_Epi_Endo_Myofib_Pneumo.pdf", width = 6, height = 4.5)
+
+netVisual_aggregate(object.list[[1]], signaling = "VEGF", layout = "chord", signaling.name = paste("VEGF", names(object.list)[1]), sources.use = c(12), targets.use = c(2, 11))
+
+netVisual_chord_gene(object.list[[1]], signaling = "VEGF", title.name = paste0("VEGF", " signaling network - ", names(object.list)[1]), sources.use = c(12), targets.use = c(2, 11))
+
+netVisual_chord_gene(object.list[[2]], signaling = "VEGF", title.name = paste0("VEGF", " signaling network - ", names(object.list)[2]), sources.use = c(12), targets.use = c(2, 11))
+```
+
+```{r CD8 T cell signaling}
+netVisual_heatmap(object.list[[5]], targets.use = "CD8 T cells", color.heatmap = "Reds", measure = "weight")
+netVisual_heatmap(object.list[[6]], targets.use = "CD8 T cells", color.heatmap = "Reds", measure = "weight")
+
+netVisual_heatmap(cellchat, signaling = "CD8 T cells", targets.use = "CD8 T cells", comparison = c(5, 6), measure = "weight")
+
+rankNet(cellchat, mode = c("comparison"), targets.use = "CD8 T cells", comparison = c(5,6), stacked = T, color.use = c("darkgreen", "gray20")) +
+  scale_fill_manual(labels = c("Day 9 Aged", "Day 9 Young"), values = c("gray20", "darkgreen")) +
+  labs(title = "Signaling in CD8 T cells - Day 9") +
+  theme(legend.title = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+ggsave("Figures_CellChat_RJB/08_CD8_total_signaling.pdf", height = 4.5, width = 6.5)
+
+# PVR - Poliovirus receptor (acts as ligand) - Receptors are CD226 (DNAM-1) and TIGIT
+# Local IL-4 Expression in the Lung Reduces Pulmonary Influenza-Virus-Specific Secondary Cytotoxic T Cell Responses (10.1006/viro.2000.0187)
+### XYZ - Check ITGB2 signaling
+
+
+
+# Check CXCL signaling
+netVisual_heatmap(object.list[[5]], targets.use = "CD8 T cells", signaling = "CXCL", color.heatmap = "Reds", measure = "weight", title.name = "CXCL signaling network - Day 9 Young")
+netVisual_heatmap(object.list[[6]], targets.use = "CD8 T cells", signaling = "CXCL", color.heatmap = "Reds", measure = "weight", title.name = "CXCL signaling network - Day 9 Aged")
+
+netVisual_heatmap(cellchat, targets.use = "CD8 T cells", comparison = c(5, 6), signaling = "CXCL", measure = "weight", title.name = "CXCL signaling network - Day 9")
+# Check Matrix fibroblasts and Mesothelial cells
+
+netVisual_bubble(cellchat, sources.use = c("Matrix fibroblasts", "Mesothelial cells"), targets.use = c("CD8 T cells"), comparison = c(5, 6), max.dataset = 6, title.name = "Increased signaling in Day 9 Aged", angle.x = 45, remove.isolate = F, signaling = c("CXCL"))
+
+
+
+
+netVisual_bubble(cellchat,
+                 signaling = c("CXCL", "CCL"),
+                 sources.use = c("Alveolar macrophages", "Endothelial cells", "Neutrophils", "Myofibroblasts", "CD8 T cells", "Matrix fibroblasts", "cDCs", "Vwf+ endothelial cells", "Mitotic cells", "Interstitial macrophages", "NK cells", "Pericytes", "Platelets", "Mitotic T cells", "Suppressive neutrophils", "Mast cells", "Ccr7+ DCs", "Fn1+ macrophages"),
+                 targets.use = c("CD8 T cells"),
+                 comparison = c(5, 6), title.name = "Chemokine signaling in CD8 T cells - Day 9",
+                 angle.x = 45, remove.isolate = F,
+                 color.text = c("darkgreen", "gray20")) +
+  scale_x_discrete(labels = paste0(
+      rep(c("Alveolar macrophages", "Endothelial cells", "Neutrophils", "Myofibroblasts", "CD8 T cells", "Matrix fibroblasts", "cDCs", "Vwf+ endothelial cells", "Mitotic cells", "Interstitial macrophages", "NK cells", "Pericytes", "Platelets", "Mitotic T cells", "Suppressive neutrophils", "Mast cells", "Ccr7+ DCs", "Fn1+ macrophages"), each = 2),
+      rep(c(" (Young)", " (Aged)"), 18))) +
+  scale_y_discrete(lim = c("Ccl3  - Ccr5", "Ccl4  - Ccr5", "Ccl5  - Ccr5", "Cxcl12  - Cxcr4")) # Remove Ccl8, not an established Ccr5 ligand
+ggsave("Figures_CellChat_RJB/08_CD8_CXCL_CCL_D9_Bubble.pdf", width = 10, height = 3.5)
+
+
+
+netVisual_bubble(cellchat, targets.use = c("CD8 T cells"), comparison = c(5, 6), max.dataset = 6, title.name = "Increased signaling in Aged - Day 9", angle.x = 45, remove.isolate = F, signaling = c("CXCL"))
+netVisual_bubble(cellchat, targets.use = c("CD8 T cells"), comparison = c(5, 6), max.dataset = 5, title.name = "Increased signaling in Young - Day 9", angle.x = 45, remove.isolate = F, signaling = c("CXCL"))
+
+netVisual_bubble(cellchat, targets.use = c("CD8 T cells"), comparison = c(5, 6), max.dataset = 6, title.name = "Increased signaling in Aged - Day 9", angle.x = 45, remove.isolate = F, signaling = c("CXCL"), sources.use = c("Endothelial cells", "Myofibroblasts", "Matrix fibroblasts", "Pericytes"))
+netVisual_bubble(cellchat, targets.use = c("CD8 T cells"), comparison = c(5, 6), max.dataset = 5, title.name = "Increased signaling in Young - Day 9", angle.x = 45, remove.isolate = T, signaling = c("CXCL"), sources.use = c("Vwf+ endothelial cells"))
+
+```
+```{r}
+
+
+netVisual_bubble(cellchat,
+                 signaling = c("CXCL", "CCL"),
+                 sources.use = c("Alveolar macrophages", "Neutrophils", "CD8 T cells", "Interstitial macrophages", "Mitotic T cells", "Suppressive neutrophils", "Mast cells"),
+                 targets.use = c("CD8 T cells"),
+                 comparison = c(5, 6), title.name = "Chemokine signaling in CD8 T cells - Day 9",
+                 angle.x = 45, remove.isolate = F,
+                 color.text = c("darkgreen", "gray20"))  +
+  scale_x_discrete(labels = paste0(
+      rep(c("CD8 T cells", "Interstitial macrophages", "Alveolar macrophages", "Neutrophils",   "Mitotic T cells", "Suppressive neutrophils", "Mast cells"), each = 2),
+      rep(c(" (Young)", " (Aged)"), 7)))
+ggsave("Figures_CellChat_RJB/08_CD8_CXCL_CCL_D9_Bubble_Update.pdf", width = 10, height = 3.5)
+
+```
+
+```{r GDF15 signaling}
+### Check GDF signaling (only includes Gdf15, not present on D0 or in D9_Young)
+
+# pdf("Figures_CellChat/14_Gdf15_D3_Young_heatmap.pdf", width = 7, height = 6)
+netVisual_heatmap(object.list[[3]], signaling = "GDF",
+                  color.heatmap = "Reds", title.name = c("Gdf15-Tgfbr2 signaling - Day 3 Young"),
+                  measure = "weight", remove.isolate = F)
+# dev.off()
+
+# pdf("Figures_CellChat/14_Gdf15_D3_Aged_heatmap.pdf", width = 7, height = 6)
+netVisual_heatmap(object.list[[4]], signaling = "GDF",
+                  color.heatmap = "Reds", title.name = c("Gdf15-Tgfbr2 signaling - Day 3 Aged"),
+                  measure = "weight", remove.isolate = F)
+# dev.off()
+
+# pdf("Figures_CellChat/14_Gdf15_D9_Aged_heatmap.pdf", width = 7, height = 6)
+netVisual_heatmap(object.list[[6]], signaling = "GDF",
+                  color.heatmap = "Reds", title.name = c("Gdf15-Tgfbr2 signaling - Day 3 Aged"),
+                  measure = "weight", remove.isolate = F)
+# dev.off()
+
+# Strongest GDF15 signaling is to suppressive neutrophils, suggesting Gdf15 may locally promote immunosuppression in response to heightened inflammation via these cells
+# GDF15 induces immunosuppression via CD48 on regulatory T cells in hepatocellular carcinoma (10.1136/jitc-2021-002787)
+# GDF15 can also act on DCs to promote a tolerogenic DC phenotype via GDF15-TGFBR1/2 signaling (10.3389/fimmu.2018.02407) 
+# Member of the TGFb family, also immunosuppressive in models of atherosclerosis and arthritis (10.3109/08977194.2011.607137)
+# GDF15 upregulated in multiple tissues (including lung) after injury (10.1097/01.shk.0000163393.55350.70)
+# GDF15 expressed at higher baseline levels in aged humans (10.1111/acel.13195)
+# Review of GDF15 in immunology (10.3389/fimmu.2020.00951)
+
+
+
+netVisual_bubble(object.list[[3]],
+                 signaling = c("GDF"))
+netVisual_bubble(object.list[[4]],
+                 signaling = c("GDF"))
+netVisual_bubble(object.list[[6]],
+                 signaling = c("GDF"))
+
+
+netVisual_bubble(object.list[[6]],
+                 signaling = c("GDF"),
+                 # sources.use = c("Alveolar macrophages", "Endothelial cells", "Neutrophils", "Myofibroblasts", "CD8 T cells", "Matrix fibroblasts", "cDCs", "Vwf+ endothelial cells", "Mitotic cells", "Interstitial macrophages", "NK cells", "Pericytes", "Platelets", "Mitotic T cells", "Suppressive neutrophils", "Mast cells", "Ccr7+ DCs", "Fn1+ macrophages"),
+                 # targets.use = c("CD8 T cells"),
+                 # comparison = c(5, 6), title.name = "GDF signaling in CD8 T cells - Day 9",
+                 angle.x = 45, remove.isolate = F,
+                 # color.text = c("darkgreen", "gray20")
+                 ) #+
+  # scale_x_discrete(labels = paste0(
+  #     rep(c("Alveolar macrophages", "Endothelial cells", "Neutrophils", "Myofibroblasts", "CD8 T cells", "Matrix fibroblasts", "cDCs", "Vwf+ endothelial cells", "Mitotic cells", "Interstitial macrophages", "NK cells", "Pericytes", "Platelets", "Mitotic T cells", "Suppressive neutrophils", "Mast cells", "Ccr7+ DCs", "Fn1+ macrophages"), each = 2),
+  #     rep(c(" (Young)", " (Aged)"), 18)))
+```
+
+```{r IFNg signaling}
+netVisual_heatmap(cellchat, signaling = "IFN-II", comparison = c(5, 6))
+netVisual_heatmap(cellchat, signaling = "IFN-II", comparison = c(5, 6), measure = "weight")
+```
+
+
+
+```{r Violin plots}
+# Already factored so Young comes before Old
+plotGeneExpression(cellchat, signaling = "CXCL", split.by = "datasets", colors.ggplot = F, color.use = c("forestgreen", "gray70"))
+
+plotGeneExpression(cellchat, signaling = "CCL", split.by = "datasets", colors.ggplot = F, color.use = c("forestgreen", "gray70"))
+
+plotGeneExpression(cellchat, signaling = "VEGF", split.by = "datasets", colors.ggplot = F, color.use = c("forestgreen", "gray70"))
+# Small subset of Cxcl15-hi pneumocytes has very high Vegfa expression in Old
+
+plotGeneExpression(cellchat, signaling = "FASLG", split.by = "datasets", colors.ggplot = F, color.use = c("forestgreen", "gray70"))
+# ggsave("Figures/CellChat/Old_Young_split/05_Vln_FASLG.pdf")
+
+plotGeneExpression(cellchat, signaling = "IFN-II", split.by = "datasets", colors.ggplot = F, color.use = c("forestgreen", "gray70"))
+
+plotGeneExpression(cellchat, signaling = "CD48", split.by = "datasets", colors.ggplot = F, color.use = c("forestgreen", "gray70"))
+
+plotGeneExpression(cellchat, signaling = "IL6", split.by = "datasets", colors.ggplot = F, color.use = c("forestgreen", "gray70"))
+
+plotGeneExpression(cellchat, signaling = "IL10", split.by = "datasets", colors.ggplot = F, color.use = c("forestgreen", "gray70"))
+
+plotGeneExpression(cellchat, signaling = "TGFb", split.by = "datasets", colors.ggplot = F, color.use = c("forestgreen", "gray70"))
+
+plotGeneExpression(cellchat, signaling = "KIT", split.by = "datasets", colors.ggplot = F, color.use = c("forestgreen", "gray70"))
+
+plotGeneExpression(cellchat, signaling = "CSF", split.by = "datasets", colors.ggplot = F, color.use = c("forestgreen", "gray70"))
+```
+
+
+
+
+
